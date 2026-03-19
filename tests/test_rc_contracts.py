@@ -7,7 +7,7 @@ from researchclaw.pipeline.stages import GATE_STAGES, STAGE_SEQUENCE, Stage
 
 
 def test_contracts_dict_has_exactly_23_entries():
-    assert len(CONTRACTS) == 23
+    assert len(CONTRACTS) == 15
 
 
 def test_every_stage_has_matching_contract_entry():
@@ -45,7 +45,6 @@ def test_max_retries_is_non_negative_for_all_contracts(contract: StageContract):
 
 def test_gate_stages_have_expected_max_retries():
     assert CONTRACTS[Stage.LITERATURE_SCREEN].max_retries == 0
-    assert CONTRACTS[Stage.EXPERIMENT_DESIGN].max_retries == 0
     assert CONTRACTS[Stage.QUALITY_GATE].max_retries == 0
 
 
@@ -64,7 +63,7 @@ def test_topic_init_contract_has_expected_input_output_files():
 def test_export_publish_contract_has_expected_outputs():
     contract = CONTRACTS[Stage.EXPORT_PUBLISH]
 
-    assert contract.output_files == ("paper_final.md", "code/")
+    assert contract.output_files == ("paper_final.md",)
 
 
 @pytest.mark.parametrize("contract", tuple(CONTRACTS.values()))

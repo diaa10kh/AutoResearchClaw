@@ -113,11 +113,15 @@ stages:
       Input paper:
 
       {revised}'
-  hypothesis_gen:
-    system: You formulate testable scientific hypotheses.
-    user: 'Generate at least 2 falsifiable hypotheses from synthesis.
+  contribution_framing:
+    system: You are an expert geotechnical research strategist who frames research contributions for Q1 journal papers.
+    user: 'Frame the research contribution for a geotechnical journal paper based on the synthesis below.
 
-      Output markdown and for each hypothesis provide rationale, measurable prediction, failure condition.
+      Identify the key gap in existing literature, articulate the novel contribution, and position this work relative to prior studies.
+
+      Output markdown with sections: Research Problem, Gap in Existing Literature, Paper Contribution, Novelty Statement, Positioning Relative to Prior Work, Target Journal.
+
+      Topic: {topic}
 
       Synthesis:
 

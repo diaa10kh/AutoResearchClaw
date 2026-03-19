@@ -83,7 +83,7 @@ def test_execute_pipeline_runs_stages_in_sequence(
         adapters=adapters,
     )
     assert seen == list(STAGE_SEQUENCE)
-    assert len(results) == 23
+    assert len(results) == 15
     assert all(r.status == StageStatus.DONE for r in results)
 
 
@@ -162,7 +162,7 @@ def test_execute_pipeline_continues_after_gate_when_stop_on_gate_disabled(
         adapters=adapters,
         stop_on_gate=False,
     )
-    assert len(results) == 23
+    assert len(results) == 15
     assert any(item.status == StageStatus.BLOCKED_APPROVAL for item in results)
 
 
@@ -197,7 +197,7 @@ def test_pipeline_summary_has_expected_fields_and_values(
         _ = kwargs
         if stage == Stage.LITERATURE_SCREEN:
             return _blocked(stage)
-        if stage == Stage.HYPOTHESIS_GEN:
+        if stage == Stage.CONTRIBUTION_FRAMING:
             return _failed(stage)
         return _done(stage)
 
@@ -220,7 +220,7 @@ def test_pipeline_summary_has_expected_fields_and_values(
     assert summary["stages_blocked"] == 1
     assert summary["stages_failed"] == 1
     assert summary["from_stage"] == 1
-    assert summary["final_stage"] == int(Stage.HYPOTHESIS_GEN)
+    assert summary["final_stage"] == int(Stage.CONTRIBUTION_FRAMING)
     assert summary["final_status"] == "failed"
     assert "generated" in summary
 
@@ -291,8 +291,8 @@ def test_execute_pipeline_writes_kb_entries_when_kb_root_provided(
         adapters=adapters,
         kb_root=kb_root,
     )
-    assert len(results) == 23
-    assert len(calls) == 23
+    assert len(results) == 15
+    assert len(calls) == 15
     assert calls[0] == (1, "topic_init", "run-kb")
 
 
@@ -458,7 +458,7 @@ def _pivot_result(stage: Stage) -> StageResult:
 
 def _refine_result(stage: Stage) -> StageResult:
     return StageResult(
-        stage=stage, status=StageStatus.DONE, artifacts=("decision.md",), decision="refine"
+        stage=stage, status=StageStatus.DONE, artifacts=("decision.md",), decision="revise"
     )
 
 
@@ -475,7 +475,7 @@ def test_pivot_decision_triggers_rollback_to_hypothesis_gen(
         _ = kwargs
         seen.append(stage)
         nonlocal pivot_count
-        if stage == Stage.RESEARCH_DECISION and pivot_count == 0:
+        if stage == Stage.QUALITY_GATE and pivot_count == 0:
             pivot_count += 1
             return _pivot_result(stage)
         return _done(stage)
@@ -487,9 +487,9 @@ def test_pivot_decision_triggers_rollback_to_hypothesis_gen(
         config=rc_config,
         adapters=adapters,
     )
-    # Should have seen HYPOTHESIS_GEN at least twice (original + rollback)
-    hyp_gen_count = sum(1 for s in seen if s == Stage.HYPOTHESIS_GEN)
-    assert hyp_gen_count >= 2
+    # Should have seen SYNTHESIS at least twice (original + rollback)
+    synthesis_count = sum(1 for s in seen if s == Stage.SYNTHESIS)
+    assert synthesis_count >= 2
     # Decision history should be recorded
     history_path = run_dir / "decision_history.json"
     assert history_path.exists()
@@ -505,14 +505,14 @@ def test_refine_decision_triggers_rollback_to_iterative_refine(
     adapters: AdapterBundle,
 ) -> None:
     seen: list[Stage] = []
-    refine_count = 0
+    revise_count = 0
 
     def mock_execute_stage(stage: Stage, **kwargs) -> StageResult:
         _ = kwargs
         seen.append(stage)
-        nonlocal refine_count
-        if stage == Stage.RESEARCH_DECISION and refine_count == 0:
-            refine_count += 1
+        nonlocal revise_count
+        if stage == Stage.QUALITY_GATE and revise_count == 0:
+            revise_count += 1
             return _refine_result(stage)
         return _done(stage)
 
@@ -523,9 +523,9 @@ def test_refine_decision_triggers_rollback_to_iterative_refine(
         config=rc_config,
         adapters=adapters,
     )
-    # Should have seen ITERATIVE_REFINE at least twice
-    refine_stage_count = sum(1 for s in seen if s == Stage.ITERATIVE_REFINE)
-    assert refine_stage_count >= 2
+    # Should have seen PAPER_REVISION at least twice
+    revise_stage_count = sum(1 for s in seen if s == Stage.PAPER_REVISION)
+    assert revise_stage_count >= 2
 
 
 def test_max_pivot_count_prevents_infinite_loop(
@@ -540,7 +540,7 @@ def test_max_pivot_count_prevents_infinite_loop(
         _ = kwargs
         seen.append(stage)
         # Always PIVOT — should be limited by MAX_DECISION_PIVOTS
-        if stage == Stage.RESEARCH_DECISION:
+        if stage == Stage.QUALITY_GATE:
             return _pivot_result(stage)
         return _done(stage)
 
@@ -551,9 +551,9 @@ def test_max_pivot_count_prevents_infinite_loop(
         config=rc_config,
         adapters=adapters,
     )
-    # RESEARCH_DECISION should appear at most MAX_DECISION_PIVOTS + 1 times
+    # QUALITY_GATE should appear at most MAX_DECISION_PIVOTS + 1 times
     from researchclaw.pipeline.stages import MAX_DECISION_PIVOTS
-    decision_count = sum(1 for s in seen if s == Stage.RESEARCH_DECISION)
+    decision_count = sum(1 for s in seen if s == Stage.QUALITY_GATE)
     assert decision_count <= MAX_DECISION_PIVOTS + 1
 
 
@@ -577,8 +577,8 @@ def test_proceed_decision_does_not_trigger_rollback(
         config=rc_config,
         adapters=adapters,
     )
-    # Should be exactly 23 stages, no rollback
-    assert len(seen) == 23
+    # Should be exactly 15 stages, no rollback
+    assert len(seen) == 15
     assert not (run_dir / "decision_history.json").exists()
 
 
@@ -587,35 +587,30 @@ def test_read_pivot_count_returns_zero_for_no_history(run_dir: Path) -> None:
 
 
 def test_record_decision_history_appends(run_dir: Path) -> None:
-    rc_runner._record_decision_history(run_dir, "pivot", Stage.HYPOTHESIS_GEN, 1)
-    rc_runner._record_decision_history(run_dir, "refine", Stage.ITERATIVE_REFINE, 2)
+    rc_runner._record_decision_history(run_dir, "pivot", Stage.SYNTHESIS, 1)
+    rc_runner._record_decision_history(run_dir, "revise", Stage.PAPER_REVISION, 2)
     history = json.loads((run_dir / "decision_history.json").read_text())
     assert len(history) == 2
     assert history[0]["decision"] == "pivot"
-    assert history[1]["decision"] == "refine"
+    assert history[1]["decision"] == "revise"
 
 
 # ── Deliverables packaging tests ──
 
 
 def _setup_stage_artifacts(run_dir: Path) -> None:
-    """Create typical stage-22 and stage-23 output files for testing."""
-    s22 = run_dir / "stage-22"
-    s22.mkdir(parents=True, exist_ok=True)
-    (s22 / "paper_final.md").write_text("# My Paper\nContent here.", encoding="utf-8")
-    (s22 / "paper.tex").write_text("\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}", encoding="utf-8")
-    (s22 / "references.bib").write_text("@article{smith2024,\n  title={Test}\n}", encoding="utf-8")
-    code_dir = s22 / "code"
-    code_dir.mkdir()
-    (code_dir / "main.py").write_text("print('hello')", encoding="utf-8")
-    (code_dir / "requirements.txt").write_text("numpy\n", encoding="utf-8")
-    (code_dir / "README.md").write_text("# Code\n", encoding="utf-8")
+    """Create typical stage-14 and stage-15 output files for testing."""
+    s14 = run_dir / "stage-14"
+    s14.mkdir(parents=True, exist_ok=True)
+    (s14 / "paper_final.md").write_text("# My Paper\nContent here.", encoding="utf-8")
+    (s14 / "paper.tex").write_text("\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}", encoding="utf-8")
+    (s14 / "references.bib").write_text("@article{smith2024,\n  title={Test}\n}", encoding="utf-8")
 
-    s23 = run_dir / "stage-23"
-    s23.mkdir(parents=True, exist_ok=True)
-    (s23 / "paper_final_verified.md").write_text("# My Paper (verified)\nContent.", encoding="utf-8")
-    (s23 / "references_verified.bib").write_text("@article{smith2024,\n  title={Test}\n}", encoding="utf-8")
-    (s23 / "verification_report.json").write_text(
+    s15 = run_dir / "stage-15"
+    s15.mkdir(parents=True, exist_ok=True)
+    (s15 / "paper_final_verified.md").write_text("# My Paper (verified)\nContent.", encoding="utf-8")
+    (s15 / "references_verified.bib").write_text("@article{smith2024,\n  title={Test}\n}", encoding="utf-8")
+    (s15 / "verification_report.json").write_text(
         json.dumps({"summary": {"total": 5, "verified": 4}}), encoding="utf-8"
     )
 
@@ -630,7 +625,6 @@ def test_package_deliverables_collects_all_artifacts(
     assert (dest / "paper_final.md").exists()
     assert (dest / "paper.tex").exists()
     assert (dest / "references.bib").exists()
-    assert (dest / "code" / "main.py").exists()
     assert (dest / "verification_report.json").exists()
     assert (dest / "manifest.json").exists()
     manifest = json.loads((dest / "manifest.json").read_text())
@@ -654,11 +648,11 @@ def test_package_deliverables_prefers_verified_versions(
 def test_package_deliverables_falls_back_to_stage22(
     run_dir: Path, rc_config: RCConfig
 ) -> None:
-    """When stage 23 outputs are missing, falls back to stage 22 versions."""
-    s22 = run_dir / "stage-22"
-    s22.mkdir(parents=True, exist_ok=True)
-    (s22 / "paper_final.md").write_text("# Base Paper", encoding="utf-8")
-    (s22 / "references.bib").write_text("@article{a,title={A}}", encoding="utf-8")
+    """When stage 15 outputs are missing, falls back to stage 14 versions."""
+    s14 = run_dir / "stage-14"
+    s14.mkdir(parents=True, exist_ok=True)
+    (s14 / "paper_final.md").write_text("# Base Paper", encoding="utf-8")
+    (s14 / "references.bib").write_text("@article{a,title={A}}", encoding="utf-8")
 
     dest = rc_runner._package_deliverables(run_dir, "run-fallback", rc_config)
     assert dest is not None
@@ -794,8 +788,8 @@ def test_degraded_quality_gate_continues_pipeline(
         config=rc_config,
         adapters=adapters,
     )
-    # All 23 stages should execute (not stopped at quality gate)
-    assert len(results) == 23
+    # All 15 stages should execute (not stopped at quality gate)
+    assert len(results) == 15
     assert seen == list(STAGE_SEQUENCE)
     # Quality gate result should have decision="degraded"
     qg_result = [r for r in results if r.stage == Stage.QUALITY_GATE][0]

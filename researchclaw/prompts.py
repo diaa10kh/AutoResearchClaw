@@ -1567,34 +1567,26 @@ _DEFAULT_STAGES: dict[str, dict[str, Any]] = {
         ),
         "max_tokens": 8192,
     },
-    "hypothesis_gen": {
+    "contribution_framing": {
         "system": (
-            "You formulate testable scientific hypotheses that address gaps "
-            "NOT covered by existing literature. Your hypotheses must be:\n"
-            "1. NOVEL: Not simply replicating known results or testing obvious things.\n"
-            "2. GAP-FILLING: Address specific weaknesses or blind spots identified "
-            "in the literature synthesis.\n"
-            "3. FEASIBLE: Testable with limited compute (single GPU, <1 day runtime).\n"
-            "4. FALSIFIABLE: Have clear failure conditions that would definitively "
-            "reject the hypothesis.\n"
-            "5. SURPRISING: At least one hypothesis should challenge conventional "
-            "wisdom or test a counter-intuitive prediction."
+            "You are an expert geotechnical research strategist who frames research "
+            "contributions for Q1 journal papers. Your framing must be:\n"
+            "1. SPECIFIC: Identify precise gaps not addressed by existing literature.\n"
+            "2. NOVEL: Clearly articulate what is new about this work.\n"
+            "3. POSITIONED: Compare and contrast with key prior studies.\n"
+            "4. ACTIONABLE: Provide concrete guidance for paper writing.\n"
+            "5. TARGETED: Recommend an appropriate Q1 geotechnical journal."
         ),
         "user": (
-            "Generate at least 2 falsifiable hypotheses from the synthesis below.\n"
-            "For each hypothesis provide:\n"
-            "- **Hypothesis statement**: A clear, testable claim\n"
-            "- **Novelty argument**: Why this has NOT been tested before, citing "
-            "specific gaps from the synthesis\n"
-            "- **Rationale**: Theoretical or empirical basis for expecting this result\n"
-            "- **Measurable prediction**: Specific quantitative outcome expected\n"
-            "- **Failure condition**: What result would reject this hypothesis?\n"
-            "- **Required baselines**: What modern, state-of-the-art methods must be "
-            "compared against to make the finding meaningful?\n\n"
-            "AVOID:\n"
-            "- Hypotheses that are trivially obvious (e.g., 'more data improves accuracy')\n"
-            "- Hypotheses that replicate well-known results already in the literature\n"
-            "- Hypotheses that cannot be tested within the compute budget\n\n"
+            "Frame the research contribution for a geotechnical journal paper.\n\n"
+            "Output markdown with these sections:\n"
+            "- **Research Problem**: The specific geotechnical challenge being addressed\n"
+            "- **Gap in Existing Literature**: What prior work has missed (3+ specific gaps)\n"
+            "- **Paper Contribution**: Numbered list of concrete contributions (4+)\n"
+            "- **Novelty Statement**: One sentence capturing the core novelty\n"
+            "- **Positioning Relative to Prior Work**: 3+ comparisons with specific papers\n"
+            "- **Target Journal**: Recommended Q1 journal with justification\n\n"
+            "Topic: {topic}\n\n"
             "Synthesis:\n{synthesis}"
         ),
     },

@@ -101,6 +101,23 @@ _DOMAIN_KEYWORDS: dict[str, tuple[list[str], str, str]] = {
         "engineering",
         "IEEE Transactions, ASME journals, AIAA",
     ),
+    "geotechnical": (
+        [
+            "geotechnical", "pile", "soil", "foundation", "bearing capacity",
+            "consolidation", "settlement", "retaining wall", "embankment",
+            "slope stability", "earth pressure", "seepage", "pore pressure",
+            "constitutive model", "Mohr-Coulomb", "Modified Cam Clay",
+            "finite element geotechnical", "finite difference geotechnical",
+            "coupled Eulerian-Lagrangian", "CEL", "large deformation",
+            "pile installation", "pile penetration", "soil-structure interaction",
+            "centrifuge", "triaxial", "oedometer", "shear strength",
+            "effective stress", "total stress", "drained", "undrained",
+            "hypoplastic", "NorSand", "sand", "clay", "rock mechanics",
+            "tunneling", "excavation", "ground improvement",
+        ],
+        "geotechnical engineering",
+        "Computers and Geotechnics, Géotechnique, IJNAMG, JGGE",
+    ),
     "biology": (
         ["genomics", "proteomics", "transcriptomics", "CRISPR",
          "single-cell", "phylogenetic", "ecology", "neuroscience",
@@ -1448,6 +1465,42 @@ The combined approach outperforms either component under fixed compute budget.
 """
 
 
+def _default_contribution_framing(topic: str) -> str:
+    return f"""# Contribution Framing: {topic}
+
+## Research Problem
+{topic} — a geotechnical engineering challenge requiring rigorous numerical analysis.
+
+## Gap in Existing Literature
+Existing studies have not fully addressed the specific conditions and mechanisms
+relevant to this problem. Key gaps include:
+- Limited validation against comprehensive experimental datasets
+- Insufficient parametric studies covering the relevant parameter space
+- Lack of mechanistic insight into the governing failure/deformation modes
+
+## Paper Contribution
+This paper contributes:
+1. A validated numerical model for {topic} using advanced finite element / finite
+   difference / CEL simulation methods
+2. A systematic parametric study quantifying sensitivity to key design parameters
+3. Engineering design guidance derived from the numerical results
+4. Mechanistic interpretation of observed behaviour
+
+## Novelty Statement
+The novelty of this work lies in [specific aspect that distinguishes it from prior work].
+This is demonstrated by comparison with published experimental and numerical benchmarks.
+
+## Positioning Relative to Prior Work
+- [Author et al., Year]: studied [related topic] but did not address [gap].
+- [Author et al., Year]: used [simpler model] without [advanced feature].
+- This paper addresses these gaps by [specific approach].
+
+## Target Journal
+Q1 geotechnical engineering journal (e.g., Computers and Geotechnics, Géotechnique,
+Int. J. Num. Anal. Meth. Geomech.)
+"""
+
+
 def _default_paper_outline(topic: str) -> str:
     return f"""# Paper Outline
 
@@ -2562,7 +2615,7 @@ def _synthesize_perspectives(
     return resp.content
 
 
-def _execute_hypothesis_gen(
+def _execute_contribution_framing(
     stage_dir: Path,
     run_dir: Path,
     config: RCConfig,
@@ -2574,54 +2627,31 @@ def _execute_hypothesis_gen(
     synthesis = _read_prior_artifact(run_dir, "synthesis.md") or ""
     if llm is not None:
         _pm = prompts or PromptManager()
-        from researchclaw.prompts import DEBATE_ROLES_HYPOTHESIS  # noqa: PLC0415
-
-        # --- Multi-perspective debate ---
-        perspectives_dir = stage_dir / "perspectives"
-        variables = {"topic": config.research.topic, "synthesis": synthesis}
-        perspectives = _multi_perspective_generate(
-            llm, DEBATE_ROLES_HYPOTHESIS, variables, perspectives_dir
-        )
-        # --- Synthesize into final hypotheses ---
-        hypotheses_md = _synthesize_perspectives(
-            llm, perspectives, "hypothesis_synthesize", _pm
-        )
-    else:
-        hypotheses_md = _default_hypotheses(config.research.topic)
-    (stage_dir / "hypotheses.md").write_text(hypotheses_md, encoding="utf-8")
-
-    # --- Novelty check (non-blocking) ---
-    novelty_artifacts: tuple[str, ...] = ()
-    try:
-        from researchclaw.literature.novelty import check_novelty  # noqa: PLC0415
-
-        candidates_text = _read_prior_artifact(run_dir, "candidates.jsonl") or ""
-        papers_seen = _parse_jsonl_rows(candidates_text) if candidates_text else []
-        novelty_report = check_novelty(
+        _overlay = _get_evolution_overlay(run_dir, "contribution_framing")
+        sp = _pm.for_stage(
+            "contribution_framing",
+            evolution_overlay=_overlay,
             topic=config.research.topic,
-            hypotheses_text=hypotheses_md,
-            papers_already_seen=papers_seen,
-            s2_api_key=getattr(config.llm, "s2_api_key", ""),
+            synthesis=synthesis,
         )
-        (stage_dir / "novelty_report.json").write_text(
-            json.dumps(novelty_report, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        resp = _chat_with_prompt(
+            llm,
+            sp.system,
+            sp.user,
+            json_mode=sp.json_mode,
+            max_tokens=sp.max_tokens,
         )
-        novelty_artifacts = ("novelty_report.json",)
-        logger.info(
-            "Novelty check: score=%.3f  assessment=%s  recommendation=%s",
-            novelty_report["novelty_score"],
-            novelty_report["assessment"],
-            novelty_report["recommendation"],
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning("Novelty check failed (non-blocking)", exc_info=True)
-
+        framing_md = resp.content
+        if not framing_md.strip():
+            framing_md = _default_contribution_framing(config.research.topic)
+    else:
+        framing_md = _default_contribution_framing(config.research.topic)
+    (stage_dir / "contribution_framing.md").write_text(framing_md, encoding="utf-8")
     return StageResult(
-        stage=Stage.HYPOTHESIS_GEN,
+        stage=Stage.CONTRIBUTION_FRAMING,
         status=StageStatus.DONE,
-        artifacts=("hypotheses.md",) + novelty_artifacts,
-        evidence_refs=("stage-08/hypotheses.md",),
+        artifacts=("contribution_framing.md",),
+        evidence_refs=(f"stage-{int(Stage.CONTRIBUTION_FRAMING):02d}/contribution_framing.md",),
     )
 
 
@@ -5754,14 +5784,11 @@ def _execute_paper_outline(
     llm: LLMClient | None = None,
     prompts: PromptManager | None = None,
 ) -> StageResult:
-    analysis = _read_prior_artifact(run_dir, "analysis.md") or ""
-    decision = _read_prior_artifact(run_dir, "decision.md") or ""
+    synthesis = _read_prior_artifact(run_dir, "synthesis.md") or ""
+    contribution_framing = _read_prior_artifact(run_dir, "contribution_framing.md") or ""
     preamble = _build_context_preamble(
         config,
         run_dir,
-        include_analysis=True,
-        include_decision=True,
-        include_experiment_data=True,
     )
 
     # WS-5.2: Read iteration feedback if available (multi-round iteration)
@@ -5797,8 +5824,8 @@ def _execute_paper_outline(
             preamble=preamble,
             topic_constraint=_pm.block("topic_constraint", topic=config.research.topic),
             feedback=feedback,
-            analysis=analysis,
-            decision=decision,
+            synthesis=synthesis,
+            contribution_framing=contribution_framing,
             academic_style_guide=_asg,
         )
         resp = _chat_with_prompt(
@@ -9496,20 +9523,12 @@ _STAGE_EXECUTORS: dict[Stage, Callable[..., StageResult]] = {
     Stage.LITERATURE_SCREEN: _execute_literature_screen,
     Stage.KNOWLEDGE_EXTRACT: _execute_knowledge_extract,
     Stage.SYNTHESIS: _execute_synthesis,
-    Stage.HYPOTHESIS_GEN: _execute_hypothesis_gen,
-    Stage.EXPERIMENT_DESIGN: _execute_experiment_design,
-    Stage.CODE_GENERATION: _execute_code_generation,
-    Stage.RESOURCE_PLANNING: _execute_resource_planning,
-    Stage.EXPERIMENT_RUN: _execute_experiment_run,
-    Stage.ITERATIVE_REFINE: _execute_iterative_refine,
-    Stage.RESULT_ANALYSIS: _execute_result_analysis,
-    Stage.RESEARCH_DECISION: _execute_research_decision,
+    Stage.CONTRIBUTION_FRAMING: _execute_contribution_framing,
     Stage.PAPER_OUTLINE: _execute_paper_outline,
     Stage.PAPER_DRAFT: _execute_paper_draft,
     Stage.PEER_REVIEW: _execute_peer_review,
     Stage.PAPER_REVISION: _execute_paper_revision,
     Stage.QUALITY_GATE: _execute_quality_gate,
-    Stage.KNOWLEDGE_ARCHIVE: _execute_knowledge_archive,
     Stage.EXPORT_PUBLISH: _execute_export_publish,
     Stage.CITATION_VERIFY: _execute_citation_verify,
 }

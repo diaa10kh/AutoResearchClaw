@@ -1,15 +1,14 @@
-"""23-stage ResearchClaw pipeline state machine.
+"""15-stage ResearchClaw pipeline for geotechnical journal-paper writing.
 
 Defines the stage sequence, status transitions, gate logic, and rollback rules.
-Migrated from arc/state_machine.py (19 stages) with the following changes:
-  - SEARCH_PLAN + SOURCE_CONNECT → SEARCH_STRATEGY
-  - RELEVANCE_SCREEN + QUALITY_SCREEN → LITERATURE_SCREEN
-  - CLUSTER_TOPICS + GAP_ANALYSIS → SYNTHESIS
-  - EXPERIMENT_DESIGN split → EXPERIMENT_DESIGN + CODE_GENERATION
-  - EXECUTE split → EXPERIMENT_RUN + ITERATIVE_REFINE
-  - WRITE_DRAFT split → PAPER_OUTLINE + PAPER_DRAFT
-  - Added PAPER_REVISION, QUALITY_GATE, EXPORT_PUBLISH
-  - RETROSPECTIVE_ARCHIVE split → KNOWLEDGE_ARCHIVE (+ QUALITY_GATE + EXPORT_PUBLISH)
+Optimized for Q1 journal papers in numerical simulation / geotechnical engineering.
+
+Removed from the original 23-stage pipeline:
+  - EXPERIMENT_DESIGN, CODE_GENERATION, RESOURCE_PLANNING (Phase D)
+  - EXPERIMENT_RUN, ITERATIVE_REFINE (Phase E)
+  - RESULT_ANALYSIS, RESEARCH_DECISION (Phase F)
+  - KNOWLEDGE_ARCHIVE (no longer needed without experiment archival)
+  - HYPOTHESIS_GEN replaced by CONTRIBUTION_FRAMING for paper-focused workflow
 """
 
 from __future__ import annotations
@@ -20,9 +19,9 @@ from typing import Iterable
 
 
 class Stage(IntEnum):
-    """23-stage research pipeline."""
+    """15-stage geotechnical journal-paper pipeline."""
 
-    # Phase A: Research Scoping
+    # Phase A: Paper Scoping
     TOPIC_INIT = 1
     PROBLEM_DECOMPOSE = 2
 
@@ -32,34 +31,20 @@ class Stage(IntEnum):
     LITERATURE_SCREEN = 5  # GATE
     KNOWLEDGE_EXTRACT = 6
 
-    # Phase C: Knowledge Synthesis
+    # Phase C: Knowledge Synthesis & Contribution Framing
     SYNTHESIS = 7
-    HYPOTHESIS_GEN = 8
+    CONTRIBUTION_FRAMING = 8  # Replaces HYPOTHESIS_GEN; frames paper contribution
 
-    # Phase D: Experiment Design
-    EXPERIMENT_DESIGN = 9  # GATE
-    CODE_GENERATION = 10  # NEW
-    RESOURCE_PLANNING = 11
+    # Phase D: Paper Writing
+    PAPER_OUTLINE = 9
+    PAPER_DRAFT = 10
+    PEER_REVIEW = 11
+    PAPER_REVISION = 12
 
-    # Phase E: Experiment Execution
-    EXPERIMENT_RUN = 12
-    ITERATIVE_REFINE = 13  # NEW
-
-    # Phase F: Analysis & Decision
-    RESULT_ANALYSIS = 14
-    RESEARCH_DECISION = 15
-
-    # Phase G: Paper Writing
-    PAPER_OUTLINE = 16
-    PAPER_DRAFT = 17
-    PEER_REVIEW = 18
-    PAPER_REVISION = 19  # NEW
-
-    # Phase H: Finalization
-    QUALITY_GATE = 20  # GATE
-    KNOWLEDGE_ARCHIVE = 21
-    EXPORT_PUBLISH = 22
-    CITATION_VERIFY = 23
+    # Phase E: Finalization
+    QUALITY_GATE = 13  # GATE
+    EXPORT_PUBLISH = 14
+    CITATION_VERIFY = 15
 
 
 class StageStatus(str, Enum):
@@ -109,7 +94,6 @@ PREVIOUS_STAGE: dict[Stage, Stage | None] = {
 GATE_STAGES: frozenset[Stage] = frozenset(
     {
         Stage.LITERATURE_SCREEN,
-        Stage.EXPERIMENT_DESIGN,
         Stage.QUALITY_GATE,
     }
 )
@@ -117,17 +101,16 @@ GATE_STAGES: frozenset[Stage] = frozenset(
 # Gate rollback targets: when a gate rejects, where to roll back
 GATE_ROLLBACK: dict[Stage, Stage] = {
     Stage.LITERATURE_SCREEN: Stage.LITERATURE_COLLECT,  # reject → re-collect
-    Stage.EXPERIMENT_DESIGN: Stage.HYPOTHESIS_GEN,  # reject → re-hypothesize
     Stage.QUALITY_GATE: Stage.PAPER_OUTLINE,  # reject → rewrite paper
 }
 
 # ---------------------------------------------------------------------------
-# Research decision rollback targets (PIVOT/REFINE from Stage 15)
+# Quality-gate rollback targets (PIVOT/REVISE from QUALITY_GATE)
 # ---------------------------------------------------------------------------
 
 DECISION_ROLLBACK: dict[str, Stage] = {
-    "pivot": Stage.HYPOTHESIS_GEN,       # Discard hypotheses, re-generate
-    "refine": Stage.ITERATIVE_REFINE,    # Keep hypotheses, re-run experiments
+    "pivot": Stage.SYNTHESIS,         # Re-synthesize literature, re-frame contribution
+    "revise": Stage.PAPER_REVISION,   # Re-revise manuscript without full re-synthesis
 }
 
 MAX_DECISION_PIVOTS: int = 2  # Prevent infinite loops
@@ -138,8 +121,7 @@ MAX_DECISION_PIVOTS: int = 2  # Prevent infinite loops
 
 NONCRITICAL_STAGES: frozenset[Stage] = frozenset(
     {
-        Stage.QUALITY_GATE,       # 20: low quality should warn, not block deliverables
-        Stage.KNOWLEDGE_ARCHIVE,  # 21: archival doesn't affect paper output
+        Stage.QUALITY_GATE,       # 13: low quality should warn, not block deliverables
         # T3.4: CITATION_VERIFY removed — hallucinated citations MUST block export
     }
 )
@@ -149,30 +131,22 @@ NONCRITICAL_STAGES: frozenset[Stage] = frozenset(
 # ---------------------------------------------------------------------------
 
 PHASE_MAP: dict[str, tuple[Stage, ...]] = {
-    "A: Research Scoping": (Stage.TOPIC_INIT, Stage.PROBLEM_DECOMPOSE),
+    "A: Paper Scoping": (Stage.TOPIC_INIT, Stage.PROBLEM_DECOMPOSE),
     "B: Literature Discovery": (
         Stage.SEARCH_STRATEGY,
         Stage.LITERATURE_COLLECT,
         Stage.LITERATURE_SCREEN,
         Stage.KNOWLEDGE_EXTRACT,
     ),
-    "C: Knowledge Synthesis": (Stage.SYNTHESIS, Stage.HYPOTHESIS_GEN),
-    "D: Experiment Design": (
-        Stage.EXPERIMENT_DESIGN,
-        Stage.CODE_GENERATION,
-        Stage.RESOURCE_PLANNING,
-    ),
-    "E: Experiment Execution": (Stage.EXPERIMENT_RUN, Stage.ITERATIVE_REFINE),
-    "F: Analysis & Decision": (Stage.RESULT_ANALYSIS, Stage.RESEARCH_DECISION),
-    "G: Paper Writing": (
+    "C: Knowledge Synthesis": (Stage.SYNTHESIS, Stage.CONTRIBUTION_FRAMING),
+    "D: Paper Writing": (
         Stage.PAPER_OUTLINE,
         Stage.PAPER_DRAFT,
         Stage.PEER_REVIEW,
         Stage.PAPER_REVISION,
     ),
-    "H: Finalization": (
+    "E: Finalization": (
         Stage.QUALITY_GATE,
-        Stage.KNOWLEDGE_ARCHIVE,
         Stage.EXPORT_PUBLISH,
         Stage.CITATION_VERIFY,
     ),
