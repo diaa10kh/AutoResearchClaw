@@ -6969,7 +6969,7 @@ def _execute_paper_draft(
             )
 
     # Geotechnical context instruction for the paper draft
-    exp_metrics_instruction = (
+    paper_requirements_instruction = (
         "\n\n## GEOTECHNICAL JOURNAL PAPER REQUIREMENTS\n"
         "This is a paper improvement engine for geotechnical numerical simulation papers.\n"
         "- All claims must be supported by cited literature or your simulation results.\n"
@@ -7001,7 +7001,7 @@ def _execute_paper_draft(
             evolution_overlay=_overlay,
             preamble=preamble,
             topic_constraint=topic_constraint,
-            exp_metrics_instruction=exp_metrics_instruction,
+            exp_metrics_instruction=paper_requirements_instruction,
             citation_instruction=citation_instruction,
             outline=outline,
             **_style_blocks,

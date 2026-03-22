@@ -31,7 +31,7 @@ def test_stage_values_follow_sequence_order(index: int, stage: Stage):
     assert int(stage) == index
 
 
-def test_stage_sequence_contains_all_23_stages_in_order():
+def test_stage_sequence_contains_all_15_stages_in_order():
     assert len(STAGE_SEQUENCE) == 15
     assert STAGE_SEQUENCE[0] is Stage.TOPIC_INIT
     assert STAGE_SEQUENCE[-1] is Stage.CITATION_VERIFY

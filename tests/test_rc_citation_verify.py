@@ -617,7 +617,7 @@ class TestStage23Integration:
         finalization_stages = PHASE_MAP["E: Finalization"]
         assert Stage.CITATION_VERIFY in finalization_stages
 
-    def test_total_stages_is_23(self) -> None:
+    def test_total_stages_is_15(self) -> None:
         from researchclaw.pipeline.stages import STAGE_SEQUENCE
 
         assert len(STAGE_SEQUENCE) == 15
