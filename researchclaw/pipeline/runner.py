@@ -1029,12 +1029,9 @@ def _metaclaw_post_pipeline(
             stage_name = {
                 1: "topic_init", 2: "problem_decompose", 3: "search_strategy",
                 4: "literature_collect", 5: "literature_screen", 6: "knowledge_extract",
-                7: "synthesis", 8: "hypothesis_gen", 9: "experiment_design",
-                10: "code_generation", 11: "resource_planning", 12: "experiment_run",
-                13: "iterative_refine", 14: "result_analysis", 15: "research_decision",
-                16: "paper_outline", 17: "paper_draft", 18: "peer_review",
-                19: "paper_revision", 20: "quality_gate", 21: "knowledge_archive",
-                22: "export_publish", 23: "citation_verify",
+                7: "synthesis", 8: "contribution_framing", 9: "paper_outline",
+                10: "paper_draft", 11: "peer_review", 12: "paper_revision",
+                13: "quality_gate", 14: "export_publish", 15: "citation_verify",
             }.get(stage_num, "")
             if not stage_name:
                 continue

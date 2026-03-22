@@ -1986,53 +1986,38 @@ class TestTimeoutAwareRefine:
 
 
 class TestDataIntegrityBlock:
-    """Test paper draft blocked when no metrics exist (R4-2a)."""
+    """Test paper draft behavior with geotechnical workflow (no experiment blocking)."""
 
-    def test_paper_draft_blocked_with_no_metrics(
+    def test_paper_draft_proceeds_without_metrics(
         self, tmp_path: Path, run_dir: Path, rc_config: RCConfig, adapters: AdapterBundle
     ) -> None:
-        # Write prior artifacts with NO metrics
-        _write_prior_artifact(run_dir, 16, "outline.md", "# Outline\n## Abstract\n")
-        # No experiment_summary.json, no run files with metrics
-        runs_dir = run_dir / "stage-12" / "runs"
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        (runs_dir / "run-1.json").write_text(
-            json.dumps({"run_id": "run-1", "status": "failed", "metrics": {}, "timed_out": True}),
-            encoding="utf-8",
-        )
+        # In the geotechnical journal workflow, paper drafting does NOT
+        # block on missing experiment metrics — the paper is based on
+        # synthesis and contribution framing, not ML experiment runs.
+        _write_prior_artifact(run_dir, 9, "outline.md", "# Outline\n## Abstract\n")
+        _write_prior_artifact(run_dir, 7, "synthesis.md", "## Synthesis\nPrior work...")
+        _write_prior_artifact(run_dir, 8, "contribution_framing.md", "## Contribution\nThis work...")
 
-        stage_dir = run_dir / "stage-17"
+        stage_dir = run_dir / "stage-10"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
-        llm = FakeLLMClient("should not be called")
+        llm = FakeLLMClient("# Paper Title\n## Abstract\nSome abstract text.")
         result = rc_executor._execute_paper_draft(
             stage_dir, run_dir, rc_config, adapters, llm=llm
         )
 
-        assert result.status == StageStatus.FAILED
-        draft = (stage_dir / "paper_draft.md").read_text(encoding="utf-8")
-        assert "Blocked" in draft or "BLOCKED" in draft or "no metrics" in draft.lower()
-        # LLM should NOT have been called
-        assert len(llm.calls) == 0
+        # Geotechnical workflow: should proceed (not blocked)
+        assert result.status == StageStatus.DONE
+        assert len(llm.calls) >= 1
 
-    def test_paper_draft_proceeds_with_metrics(
+    def test_paper_draft_proceeds_with_synthesis(
         self, tmp_path: Path, run_dir: Path, rc_config: RCConfig, adapters: AdapterBundle
     ) -> None:
-        _write_prior_artifact(run_dir, 16, "outline.md", "# Outline\n## Abstract\n")
-        # Write experiment data with real metrics
-        runs_dir = run_dir / "stage-12" / "runs"
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        (runs_dir / "run-1.json").write_text(
-            json.dumps({
-                "run_id": "run-1",
-                "status": "completed",
-                "metrics": {"best_loss": 0.123},
-                "stdout": "best_loss: 0.123\n",
-            }),
-            encoding="utf-8",
-        )
+        _write_prior_artifact(run_dir, 9, "outline.md", "# Outline\n## Abstract\n")
+        _write_prior_artifact(run_dir, 7, "synthesis.md", "## Synthesis\nFEM studies of pile installation...")
+        _write_prior_artifact(run_dir, 8, "contribution_framing.md", "## Contribution\nNumerical analysis...")
 
-        stage_dir = run_dir / "stage-17"
+        stage_dir = run_dir / "stage-10"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
         llm = FakeLLMClient("# Paper Title\n## Abstract\nSome abstract text.")
@@ -2042,11 +2027,11 @@ class TestDataIntegrityBlock:
 
         # Should proceed (LLM was called)
         assert len(llm.calls) >= 1
-        # The prompt should contain anti-fabrication instructions
+        # The prompt should contain geotechnical requirements
         all_prompts = " ".join(
             msg["content"] for call in llm.calls for msg in call
         )
-        assert "Data Integrity" in all_prompts or "ONLY report numbers" in all_prompts
+        assert "geotechnical" in all_prompts.lower() or "Geotechnical" in all_prompts
 
 
 # ── R4-3: Conference-Grade Title Guidelines Tests ────────────────────
@@ -2130,9 +2115,13 @@ class TestConferenceWritingQuality:
             citation_instruction="test",
             outline="test",
         )
-        # System prompt should mention key principles
+        # System prompt should mention key principles for geotechnical papers
         assert "NOVELTY" in sp.system or "novelty" in sp.system.lower()
-        assert "fabricate" in sp.system.lower() or "real experimental" in sp.system.lower()
+        assert (
+            "fabricate" in sp.system.lower()
+            or "precision" in sp.system.lower()
+            or "validation" in sp.system.lower()
+        )
 
 
 # ── R5-1 & R5-2: Bug Fixes Tests ────────────────────────────────────
@@ -2769,10 +2758,10 @@ class TestMultiConditionEnforcement:
 
 
 class TestEvidenceBoundedWriting:
-    """R7-2: Paper draft prompt must enforce evidence-bounded claims."""
+    """R7-2: Paper draft prompt must enforce evidence-bounded claims (geotechnical)."""
 
     def test_paper_draft_has_evidence_bounding_rules(self) -> None:
-        """System prompt should contain evidence-bounding rules."""
+        """System prompt should contain evidence/claim bounding rules."""
         from researchclaw.prompts import PromptManager
         pm = PromptManager()
         sp = pm.for_stage(
@@ -2783,12 +2772,18 @@ class TestEvidenceBoundedWriting:
             citation_instruction="",
             outline="# Outline",
         )
-        assert "EVIDENCE-BOUNDING RULES" in sp.system
-        assert "title" in sp.system.lower()
-        assert "causal claim" in sp.system.lower() or "causal claims" in sp.system.lower()
+        # Geotechnical draft prompt enforces precision, validation, and no fabrication
+        assert (
+            "PRECISION" in sp.system
+            or "VALIDATION" in sp.system
+            or "precision" in sp.system.lower()
+        )
+        # Title must be discussed somewhere in the prompt (user section)
+        full_prompt = sp.system + sp.user
+        assert "title" in full_prompt.lower() or "Title" in full_prompt
 
     def test_hedging_language_guidance(self) -> None:
-        """Should suggest hedged alternatives like 'Toward...' for partial data."""
+        """Should include guidance on validation and precise claims."""
         from researchclaw.prompts import PromptManager
         pm = PromptManager()
         sp = pm.for_stage(
@@ -2799,7 +2794,12 @@ class TestEvidenceBoundedWriting:
             citation_instruction="",
             outline="",
         )
-        assert "Toward" in sp.system or "Investigating" in sp.system
+        # Geotechnical prompt focuses on precision and validation, not hedging titles
+        assert (
+            "validat" in sp.system.lower()
+            or "precision" in sp.system.lower()
+            or "Honesty" in sp.system
+        )
 
 
 @pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
