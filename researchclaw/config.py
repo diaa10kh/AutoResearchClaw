@@ -133,6 +133,9 @@ class LlmConfig:
     api_key: str = ""
     primary_model: str = ""
     fallback_models: tuple[str, ...] = ()
+    # reasoning_effort: quality level for gpt-5.x / codex / o3 models.
+    # "high" = best quality (xhigh preference). Options: low | medium | high
+    reasoning_effort: str = "high"
     s2_api_key: str = ""
     notes: str = ""
     acp: AcpConfig = field(default_factory=AcpConfig)
@@ -592,6 +595,7 @@ def _parse_llm_config(data: dict[str, Any]) -> LlmConfig:
         api_key=data.get("api_key", ""),
         primary_model=data.get("primary_model", ""),
         fallback_models=tuple(data.get("fallback_models") or ()),
+        reasoning_effort=data.get("reasoning_effort", "high"),
         s2_api_key=data.get("s2_api_key", ""),
         notes=data.get("notes", ""),
         acp=AcpConfig(

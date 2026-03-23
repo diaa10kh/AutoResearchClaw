@@ -3376,7 +3376,7 @@ def _execute_code_generation(
 
         if any(
             config.llm.primary_model.startswith(p)
-            for p in ("gpt-5", "o3", "o4")
+            for p in ("gpt-5", "o3", "o4", "codex")
         ):
             _code_max_tokens = 16384
 
@@ -3475,10 +3475,9 @@ def _execute_code_generation(
             exp_plan=exp_plan,
             metric_direction_hint=_md_hint,
         )
-        # R13-3: Use higher max_tokens for reasoning models (they consume tokens
-        # for internal chain-of-thought). Retry once with even higher limit on empty.
+        # Use higher max_tokens for reasoning models (gpt-5.x, codex, o3/o4 family)
         _code_max_tokens = sp.max_tokens or 8192
-        if any(config.llm.primary_model.startswith(p) for p in ("gpt-5", "o3", "o4")):
+        if any(config.llm.primary_model.startswith(p) for p in ("gpt-5", "o3", "o4", "codex")):
             _code_max_tokens = max(_code_max_tokens, 16384)
 
         resp = _chat_with_prompt(
@@ -6116,9 +6115,9 @@ def _write_paper_sections(
         "data verification, condition listing, or metric enumeration before the title. "
         "The paper should read like a published manuscript, not a data report."
     )
-    # R14-1: Higher token limit for reasoning models
+    # Higher token limit for reasoning models (gpt-5.x, codex, o3/o4 family)
     _paper_max_tokens = 12000
-    if any(model_name.startswith(p) for p in ("gpt-5", "o3", "o4")):
+    if any(model_name.startswith(p) for p in ("gpt-5", "o3", "o4", "codex")):
         _paper_max_tokens = 24000
 
     # T3.5: Retry once on failure, use placeholder if still fails
