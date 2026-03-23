@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from researchclaw.llm.client import LLMClient, LLMConfig, LLMResponse, _NEW_PARAM_MODELS, _REASONING_EFFORT_MODELS
+from researchclaw.llm.client import LLMClient, LLMConfig, LLMResponse, _NEW_PARAM_MODELS, _REASONING_EFFORT_MODELS, is_reasoning_model
 
 
 class _DummyHTTPResponse:
@@ -250,6 +250,21 @@ def test_reasoning_effort_models_contains_expected_models():
         "codex-mini-latest",
     }
     assert expected.issubset(_REASONING_EFFORT_MODELS)
+
+
+def test_is_reasoning_model_returns_true_for_new_models():
+    assert is_reasoning_model("gpt-5.4") is True
+    assert is_reasoning_model("gpt-5.2") is True
+    assert is_reasoning_model("codex-mini-latest") is True
+    assert is_reasoning_model("o3") is True
+    assert is_reasoning_model("o3-mini") is True
+    assert is_reasoning_model("o4-mini") is True
+
+
+def test_is_reasoning_model_returns_false_for_old_models():
+    assert is_reasoning_model("gpt-4o") is False
+    assert is_reasoning_model("gpt-4.1") is False
+    assert is_reasoning_model("gpt-3.5-turbo") is False
 
 
 def test_codex_mini_latest_uses_max_completion_tokens(monkeypatch: pytest.MonkeyPatch):

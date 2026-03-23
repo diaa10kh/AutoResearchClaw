@@ -16,7 +16,7 @@ from researchclaw.adapters import AdapterBundle
 from researchclaw.config import RCConfig
 from researchclaw.hardware import HardwareProfile, detect_hardware, ensure_torch_available, is_metric_name
 from researchclaw.llm import create_llm_client
-from researchclaw.llm.client import LLMClient
+from researchclaw.llm.client import LLMClient, is_reasoning_model
 from researchclaw.prompts import PromptManager
 from researchclaw.pipeline.stages import (
     NEXT_STAGE,
@@ -3374,10 +3374,7 @@ def _execute_code_generation(
             )
             _sandbox_factory = _csb
 
-        if any(
-            config.llm.primary_model.startswith(p)
-            for p in ("gpt-5", "o3", "o4", "codex")
-        ):
+        if is_reasoning_model(config.llm.primary_model):
             _code_max_tokens = 16384
 
         # ── Domain detection + Code Search for non-ML domains ──────────
@@ -3477,7 +3474,7 @@ def _execute_code_generation(
         )
         # Use higher max_tokens for reasoning models (gpt-5.x, codex, o3/o4 family)
         _code_max_tokens = sp.max_tokens or 8192
-        if any(config.llm.primary_model.startswith(p) for p in ("gpt-5", "o3", "o4", "codex")):
+        if is_reasoning_model(config.llm.primary_model):
             _code_max_tokens = max(_code_max_tokens, 16384)
 
         resp = _chat_with_prompt(
@@ -6117,7 +6114,7 @@ def _write_paper_sections(
     )
     # Higher token limit for reasoning models (gpt-5.x, codex, o3/o4 family)
     _paper_max_tokens = 12000
-    if any(model_name.startswith(p) for p in ("gpt-5", "o3", "o4", "codex")):
+    if is_reasoning_model(model_name):
         _paper_max_tokens = 24000
 
     # T3.5: Retry once on failure, use placeholder if still fails

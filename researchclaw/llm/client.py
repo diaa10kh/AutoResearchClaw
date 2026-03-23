@@ -51,6 +51,18 @@ _REASONING_EFFORT_MODELS = frozenset(
     }
 )
 
+
+def is_reasoning_model(model_name: str) -> bool:
+    """Return True if *model_name* is a reasoning/Codex model (gpt-5.x, codex, o3/o4).
+
+    These models:
+    - Use ``max_completion_tokens`` instead of ``max_tokens``
+    - Accept a ``reasoning_effort`` parameter (low | medium | high)
+    - Require larger token budgets for chain-of-thought processing
+    """
+    return any(model_name.startswith(prefix) for prefix in _REASONING_EFFORT_MODELS)
+
+
 _DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -232,9 +244,7 @@ class LLMClient:
         Distinguishes: 401 (bad key), 403 (model forbidden),
                        404 (bad endpoint), 429 (rate limited), timeout.
         """
-        is_reasoning = any(
-            self.config.primary_model.startswith(p) for p in _NEW_PARAM_MODELS
-        )
+        is_reasoning = is_reasoning_model(self.config.primary_model)
         min_tokens = 64 if is_reasoning else 1
         try:
             _ = self.chat(
@@ -373,7 +383,7 @@ class LLMClient:
                 reasoning_min = 32768
                 body["max_completion_tokens"] = max(max_tokens, reasoning_min)
                 # Inject reasoning_effort for models that support it (gpt-5.x, codex, o3)
-                if any(model.startswith(prefix) for prefix in _REASONING_EFFORT_MODELS):
+                if is_reasoning_model(model):
                     effort = self.config.reasoning_effort or "high"
                     body["reasoning_effort"] = effort
             else:
