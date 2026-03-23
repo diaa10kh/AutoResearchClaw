@@ -1,8 +1,9 @@
 """Lightweight OpenAI-compatible LLM client — stdlib only.
 
 Features:
-  - Model fallback chain (gpt-5.2 → gpt-5.1 → gpt-4.1 → gpt-4o)
+  - Model fallback chain (gpt-5.4 → gpt-4.1 → gpt-4o)
   - Auto-detect max_tokens vs max_completion_tokens per model
+  - reasoning_effort support for Codex / o3 / gpt-5 family models
   - Cloudflare User-Agent bypass
   - Exponential backoff retry with jitter
   - JSON mode support
@@ -32,8 +33,35 @@ _NEW_PARAM_MODELS = frozenset(
         "gpt-5.1",
         "gpt-5.2",
         "gpt-5.4",
+        "codex-mini-latest",  # OpenAI Codex model (high-quality reasoning)
     }
 )
+
+# Models that support the reasoning_effort parameter (low | medium | high)
+_REASONING_EFFORT_MODELS = frozenset(
+    {
+        "o3",
+        "o3-mini",
+        "o4-mini",
+        "gpt-5",
+        "gpt-5.1",
+        "gpt-5.2",
+        "gpt-5.4",
+        "codex-mini-latest",
+    }
+)
+
+
+def is_reasoning_model(model_name: str) -> bool:
+    """Return True if *model_name* is a reasoning/Codex model (gpt-5.x, codex, o3/o4).
+
+    These models:
+    - Use ``max_completion_tokens`` instead of ``max_tokens``
+    - Accept a ``reasoning_effort`` parameter (low | medium | high)
+    - Require larger token budgets for chain-of-thought processing
+    """
+    return any(model_name.startswith(prefix) for prefix in _REASONING_EFFORT_MODELS)
+
 
 _DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -61,9 +89,9 @@ class LLMConfig:
 
     base_url: str
     api_key: str
-    primary_model: str = "gpt-4o"
+    primary_model: str = "gpt-5.4"
     fallback_models: list[str] = field(
-        default_factory=lambda: ["gpt-4.1", "gpt-4o-mini"]
+        default_factory=lambda: ["gpt-4.1", "gpt-4o"]
     )
     max_tokens: int = 4096
     temperature: float = 0.7
@@ -71,6 +99,9 @@ class LLMConfig:
     retry_base_delay: float = 2.0
     timeout_sec: int = 300
     user_agent: str = _DEFAULT_USER_AGENT
+    # reasoning_effort: "low" | "medium" | "high" — for gpt-5.x / codex / o3 models.
+    # Use "high" for best quality academic writing (corresponds to "xhigh" preference).
+    reasoning_effort: str = "high"
     # MetaClaw bridge: extra headers for proxy requests
     extra_headers: dict[str, str] = field(default_factory=dict)
     # MetaClaw bridge: fallback URL if primary (proxy) is unreachable
@@ -126,8 +157,9 @@ class LLMClient:
         config = LLMConfig(
             base_url=base_url,
             api_key=api_key,
-            primary_model=rc_config.llm.primary_model or "gpt-4o",
+            primary_model=rc_config.llm.primary_model or "gpt-5.4",
             fallback_models=list(rc_config.llm.fallback_models or []),
+            reasoning_effort=getattr(rc_config.llm, "reasoning_effort", "high"),
             fallback_url=fallback_url,
             fallback_api_key=fallback_api_key,
         )
@@ -212,9 +244,7 @@ class LLMClient:
         Distinguishes: 401 (bad key), 403 (model forbidden),
                        404 (bad endpoint), 429 (rate limited), timeout.
         """
-        is_reasoning = any(
-            self.config.primary_model.startswith(p) for p in _NEW_PARAM_MODELS
-        )
+        is_reasoning = is_reasoning_model(self.config.primary_model)
         min_tokens = 64 if is_reasoning else 1
         try:
             _ = self.chat(
@@ -352,6 +382,10 @@ class LLMClient:
             if any(model.startswith(prefix) for prefix in _NEW_PARAM_MODELS):
                 reasoning_min = 32768
                 body["max_completion_tokens"] = max(max_tokens, reasoning_min)
+                # Inject reasoning_effort for models that support it (gpt-5.x, codex, o3)
+                if is_reasoning_model(model):
+                    effort = self.config.reasoning_effort or "high"
+                    body["reasoning_effort"] = effort
             else:
                 body["max_tokens"] = max_tokens
 
@@ -478,9 +512,10 @@ def create_client_from_yaml(yaml_path: str | None = None) -> LLMClient:
         LLMConfig(
             base_url=llm_section.get("base_url", "https://api.openai.com/v1"),
             api_key=api_key,
-            primary_model=llm_section.get("primary_model", "gpt-4o"),
+            primary_model=llm_section.get("primary_model", "gpt-5.4"),
             fallback_models=llm_section.get(
-                "fallback_models", ["gpt-4.1", "gpt-4o-mini"]
+                "fallback_models", ["gpt-4.1", "gpt-4o"]
             ),
+            reasoning_effort=llm_section.get("reasoning_effort", "high"),
         )
     )

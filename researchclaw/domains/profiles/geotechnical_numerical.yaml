@@ -1,0 +1,163 @@
+domain_id: geotechnical_numerical
+display_name: Geotechnical Engineering (Numerical Simulation)
+parent_domain: engineering
+
+experiment_paradigm: simulation
+condition_terminology:
+  baseline: reference method / published benchmark
+  proposed: proposed model / approach
+  variant: parametric study variant
+  input: soil parameters / boundary conditions
+  metric: settlement / load capacity / displacement error
+
+typical_file_structure:
+  model.inp: "FE/FD model input file (geometry, mesh, material, BCs)"
+  material.py: "Constitutive model parameters and calibration"
+  analysis.py: "Post-processing of simulation results"
+  validation.py: "Comparison against published/experimental results"
+  main.py: "Entry point: setup → run → post-process → compare"
+
+entry_point: main.py
+
+core_libraries:
+  - numpy
+  - scipy
+  - matplotlib
+
+docker_image: researchclaw/sandbox-generic:latest
+gpu_required: false
+
+pip_packages:
+  - numpy
+  - scipy
+  - matplotlib
+
+metric_types:
+  - scalar
+  - convergence
+
+standard_baselines:
+  - Mohr-Coulomb (elastic-perfectly plastic)
+  - Linear elastic
+  - Published centrifuge test results
+  - Published field measurement data
+
+evaluation_protocol: |
+  Validate simulation results against published or existing experimental/numerical
+  benchmarks. Report normalized load-displacement curves, settlement profiles,
+  and stress paths. Quantify agreement using normalized root mean square deviation
+  (NRMSD) or percentage error relative to benchmark.
+
+statistical_tests:
+  - nrmsd
+  - relative_error
+  - convergence_order_fit
+
+output_formats:
+  - latex_table
+  - load_displacement_plot
+  - contour_plot
+
+figure_types:
+  - load_displacement_curve
+  - settlement_profile
+  - stress_path_plot
+  - mesh_deformation_plot
+  - contour_plot
+
+paper_keywords:
+  - finite element analysis
+  - finite difference method
+  - coupled Eulerian-Lagrangian
+  - large deformation
+  - pile installation
+  - pile penetration
+  - constitutive model
+  - soil-structure interaction
+  - bearing capacity
+  - consolidation
+  - centrifuge test
+  - model scale
+  - prototype scale
+  - scaling laws
+  - geotechnical engineering
+  - numerical simulation
+  - mesh dependency
+  - contact modeling
+  - soil mechanics
+  - effective stress
+  - total stress
+
+writing_guidance: |
+  ## Geotechnical Numerical Simulation Paper — Writing Guidance
+
+  ### Domain-Specific Sections
+  1. **Introduction**: Motivate with engineering significance; cite relevant physical
+     experiments (centrifuge, field) and prior numerical studies. End with a clear
+     statement of the paper's contribution relative to existing work.
+
+  2. **Numerical Model**: Describe FE/FD/CEL software, mesh generation, element types,
+     boundary conditions, contact/interface formulation, and initial stress state.
+     Include a convergence/sensitivity study (mesh density, time-step).
+
+  3. **Constitutive Model**: Name the model (e.g., Mohr-Coulomb, Modified Cam Clay,
+     NorSand, Hypoplastic). List all parameters with physical meaning and calibration
+     sources. Justify parameter selection with laboratory data or published studies.
+
+  4. **Validation**: Compare directly against published centrifuge tests, field data,
+     or other validated numerical results. Show load-displacement curves, settlement
+     profiles, or stress paths. Report quantitative agreement metrics.
+
+  5. **Results & Parametric Study**: Present a systematic parametric study showing
+     sensitivity to key parameters (e.g., friction angle, stiffness, pile geometry).
+     Use dimensionless groups where appropriate.
+
+  6. **Discussion**: Interpret results in terms of mechanisms. Explain discrepancies
+     between model and benchmark. State limitations explicitly (mesh size, 2D vs 3D,
+     constitutive model simplifications).
+
+  7. **Conclusions**: Summarize key findings with quantitative statements.
+     List specific engineering implications. Suggest future work.
+
+  ### Common Weak Points to Avoid
+  - Vague claims about "good agreement" without quantitative metrics
+  - Missing mesh sensitivity / convergence study
+  - Constitutive model parameters without calibration justification
+  - Validation against only one dataset
+  - Failure to state limitations of the numerical approach
+  - Unsupported claims about novelty (compare explicitly with prior work)
+  - Placeholders like "Figure X shows..." without the actual figure description
+
+  ### Target Journals (Q1)
+  - Computers and Geotechnics
+  - Géotechnique
+  - International Journal for Numerical and Analytical Methods in Geomechanics
+  - Journal of Geotechnical and Geoenvironmental Engineering (ASCE)
+  - Acta Geotechnica
+  - Engineering Geology
+  - Soils and Foundations
+
+compute_budget_guidance: |
+  Geotechnical simulations are typically expensive:
+  - 2D plane strain: hours to days on a workstation
+  - 3D full-model: days on HPC cluster
+  For paper-writing purposes, reference existing simulation results;
+  do not attempt to re-run full simulations from scratch.
+
+dataset_guidance: |
+  Geotechnical simulation papers use:
+  - Published centrifuge test datasets (load-displacement, pore pressure, etc.)
+  - Field measurement data from instrumented piles, embankments, retaining walls
+  - Existing validated numerical simulation results from literature
+  - Laboratory element tests for constitutive model calibration (triaxial, oedometer)
+  Do NOT generate synthetic random data as a substitute for physical measurements.
+
+contribution_framing_hints: |
+  For geotechnical numerical simulation papers, a strong contribution framing includes:
+  1. What engineering problem is addressed? (e.g., pile installation effects on capacity)
+  2. What is missing in the existing literature? (cite specific papers)
+  3. What numerical approach is used? (e.g., CEL-FE for large deformation)
+  4. What is novel? (new constitutive model, new problem geometry, new validation dataset,
+     new parametric study, new mechanistic insight)
+  5. What is the engineering significance? (design guidance, safety factor, code basis)
+  6. What are the paper's limitations? (be explicit upfront)

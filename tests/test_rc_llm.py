@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from researchclaw.llm.client import LLMClient, LLMConfig, LLMResponse, _NEW_PARAM_MODELS
+from researchclaw.llm.client import LLMClient, LLMConfig, LLMResponse, _NEW_PARAM_MODELS, _REASONING_EFFORT_MODELS, is_reasoning_model
 
 
 class _DummyHTTPResponse:
@@ -67,9 +67,10 @@ def _capture_raw_call(
 
 def test_llm_config_defaults():
     config = LLMConfig(base_url="https://api.example.com/v1", api_key="k")
-    assert config.primary_model == "gpt-4o"
+    assert config.primary_model == "gpt-5.4"
     assert config.max_tokens == 4096
     assert config.temperature == 0.7
+    assert config.reasoning_effort == "high"
 
 
 def test_llm_config_custom_values():
@@ -234,8 +235,135 @@ def test_from_rc_config_reads_api_key_from_env_when_missing(
 
 
 def test_new_param_models_contains_expected_models():
-    expected = {"gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5.4", "o3", "o3-mini", "o4-mini"}
+    expected = {
+        "gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5.4", "o3", "o3-mini", "o4-mini",
+        "codex-mini-latest",
+    }
     assert expected.issubset(_NEW_PARAM_MODELS)
+
+
+def test_reasoning_effort_models_contains_expected_models():
+    """All gpt-5.x, codex, and o3 models must support reasoning_effort."""
+    expected = {
+        "gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5.4",
+        "o3", "o3-mini", "o4-mini",
+        "codex-mini-latest",
+    }
+    assert expected.issubset(_REASONING_EFFORT_MODELS)
+
+
+def test_is_reasoning_model_returns_true_for_new_models():
+    assert is_reasoning_model("gpt-5.4") is True
+    assert is_reasoning_model("gpt-5.2") is True
+    assert is_reasoning_model("codex-mini-latest") is True
+    assert is_reasoning_model("o3") is True
+    assert is_reasoning_model("o3-mini") is True
+    assert is_reasoning_model("o4-mini") is True
+
+
+def test_is_reasoning_model_returns_false_for_old_models():
+    assert is_reasoning_model("gpt-4o") is False
+    assert is_reasoning_model("gpt-4.1") is False
+    assert is_reasoning_model("gpt-3.5-turbo") is False
+
+
+def test_codex_mini_latest_uses_max_completion_tokens(monkeypatch: pytest.MonkeyPatch):
+    """codex-mini-latest must use max_completion_tokens (not max_tokens)."""
+    response = {"choices": [{"message": {"content": "x"}, "finish_reason": "stop"}]}
+    body, _, _ = _capture_raw_call(
+        monkeypatch, model="codex-mini-latest", response_data=response
+    )
+    assert "max_completion_tokens" in body
+    assert "max_tokens" not in body
+
+
+def test_reasoning_effort_injected_for_gpt54(monkeypatch: pytest.MonkeyPatch):
+    """gpt-5.4 requests must include reasoning_effort='high' in the body."""
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req: urllib.request.Request, timeout: int) -> _DummyHTTPResponse:
+        captured["request"] = req
+        return _DummyHTTPResponse(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    config = LLMConfig(
+        base_url="https://api.example.com/v1",
+        api_key="test-key",
+        primary_model="gpt-5.4",
+        reasoning_effort="high",
+    )
+    client = LLMClient(config)
+    client._raw_call("gpt-5.4", [{"role": "user", "content": "hi"}], 100, 0.5, False)
+    request = captured["request"]
+    assert isinstance(request, urllib.request.Request)
+    body = json.loads(request.data.decode("utf-8"))
+    assert body.get("reasoning_effort") == "high"
+
+
+def test_reasoning_effort_injected_for_codex(monkeypatch: pytest.MonkeyPatch):
+    """codex-mini-latest requests must include reasoning_effort in the body."""
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req: urllib.request.Request, timeout: int) -> _DummyHTTPResponse:
+        captured["request"] = req
+        return _DummyHTTPResponse(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    config = LLMConfig(
+        base_url="https://api.example.com/v1",
+        api_key="test-key",
+        primary_model="codex-mini-latest",
+        reasoning_effort="high",
+    )
+    client = LLMClient(config)
+    client._raw_call(
+        "codex-mini-latest", [{"role": "user", "content": "hi"}], 100, 0.5, False
+    )
+    request = captured["request"]
+    assert isinstance(request, urllib.request.Request)
+    body = json.loads(request.data.decode("utf-8"))
+    assert body.get("reasoning_effort") == "high"
+
+
+def test_reasoning_effort_not_injected_for_old_models(monkeypatch: pytest.MonkeyPatch):
+    """Old models (gpt-4o, gpt-4.1) must NOT get a reasoning_effort parameter."""
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(req: urllib.request.Request, timeout: int) -> _DummyHTTPResponse:
+        captured["request"] = req
+        return _DummyHTTPResponse(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    config = LLMConfig(
+        base_url="https://api.example.com/v1",
+        api_key="test-key",
+        primary_model="gpt-4o",
+        reasoning_effort="high",
+    )
+    client = LLMClient(config)
+    client._raw_call("gpt-4o", [{"role": "user", "content": "hi"}], 100, 0.5, False)
+    request = captured["request"]
+    assert isinstance(request, urllib.request.Request)
+    body = json.loads(request.data.decode("utf-8"))
+    assert "reasoning_effort" not in body
+
+
+def test_llmconfig_default_model_is_gpt54():
+    """Default primary model should be gpt-5.4 for high-quality paper generation."""
+    config = LLMConfig(base_url="https://api.example.com/v1", api_key="k")
+    assert config.primary_model == "gpt-5.4"
+
+
+def test_llmconfig_default_reasoning_effort_is_high():
+    """Default reasoning_effort should be 'high' for best quality."""
+    config = LLMConfig(base_url="https://api.example.com/v1", api_key="k")
+    assert config.reasoning_effort == "high"
 
 
 def test_raw_call_adds_json_mode_response_format(monkeypatch: pytest.MonkeyPatch):

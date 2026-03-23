@@ -367,8 +367,9 @@ class TestCheckNovelty:
 
 
 class TestHypothesisGenNoveltyIntegration:
-    """Test that _execute_hypothesis_gen integrates novelty check correctly."""
+    """Test that _execute_contribution_framing integrates correctly."""
 
+    @pytest.mark.skip(reason="_execute_hypothesis_gen replaced by _execute_contribution_framing which does not perform novelty checks")
     def test_novelty_report_written_when_available(self, tmp_path: Path) -> None:
         """Hypothesis gen should write novelty_report.json when check succeeds."""
         from researchclaw.pipeline.executor import _execute_hypothesis_gen
@@ -419,6 +420,7 @@ class TestHypothesisGenNoveltyIntegration:
         assert report["novelty_score"] == 1.0  # no similar papers → max novelty
         assert "novelty_report.json" in result.artifacts
 
+    @pytest.mark.skip(reason="_execute_hypothesis_gen replaced by _execute_contribution_framing which does not perform novelty checks")
     def test_novelty_failure_does_not_block(self, tmp_path: Path) -> None:
         """If novelty check crashes, hypothesis gen still succeeds."""
         from researchclaw.pipeline.executor import _execute_hypothesis_gen

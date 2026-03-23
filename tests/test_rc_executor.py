@@ -92,7 +92,7 @@ def _write_prior_artifact(
 
 def test_executor_map_has_23_entries() -> None:
     executor_map = getattr(rc_executor, "EXECUTOR_MAP", rc_executor._STAGE_EXECUTORS)
-    assert len(executor_map) == 23
+    assert len(executor_map) == 15
 
 
 def test_every_stage_member_has_matching_executor() -> None:
@@ -525,9 +525,9 @@ def test_execute_stage_executor_exception_returns_failed(
         Stage.LITERATURE_SCREEN,
         Stage.KNOWLEDGE_EXTRACT,
         Stage.SYNTHESIS,
-        Stage.HYPOTHESIS_GEN,
-        Stage.EXPERIMENT_DESIGN,
-        Stage.CODE_GENERATION,
+        Stage.CONTRIBUTION_FRAMING,
+        Stage.PAPER_OUTLINE,
+        Stage.PAPER_DRAFT,
     ],
 )
 def test_stage_executor_mapping_values_are_callable(stage: Stage) -> None:
@@ -629,6 +629,7 @@ class TestStageHealth:
 from researchclaw.pipeline.contracts import CONTRACTS
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 class TestIterativeRefine:
     def _prepare_refine_inputs(self, run_dir: Path) -> None:
         _write_prior_artifact(
@@ -1076,10 +1077,12 @@ class TestExportPublishCodePackage:
         assert "My Great Paper" in readme
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 def test_contracts_stage13_includes_experiment_final() -> None:
     assert "experiment_final/" in CONTRACTS[Stage.ITERATIVE_REFINE].output_files
 
 
+@pytest.mark.skip(reason="EXPORT_PUBLISH contract updated for 15-stage pipeline; code/ dir no longer an output")
 def test_contracts_stage22_includes_code_dir() -> None:
     assert "code/" in CONTRACTS[Stage.EXPORT_PUBLISH].output_files
 
@@ -1175,6 +1178,7 @@ class TestParseDecision:
         assert rc_executor._parse_decision(text) == "pivot"
 
 
+@pytest.mark.skip(reason="RESEARCH_DECISION stage removed from 15-stage pipeline")
 class TestResearchDecisionStructured:
     def test_decision_produces_structured_json(
         self, tmp_path: Path, rc_config: RCConfig, adapters: AdapterBundle
@@ -1272,8 +1276,8 @@ class TestSynthesizePerspectives:
         assert "contrarian" in call_content
 
 
-class TestHypothesisGenDebate:
-    def test_hypothesis_gen_with_llm_creates_perspectives(
+class TestContributionFraming:
+    def test_contribution_framing_with_llm(
         self, tmp_path: Path, rc_config: RCConfig, adapters: AdapterBundle
     ) -> None:
         run_dir = tmp_path / "run"
@@ -1281,19 +1285,15 @@ class TestHypothesisGenDebate:
         stage_dir = run_dir / "stage-08"
         stage_dir.mkdir(parents=True)
         _write_prior_artifact(run_dir, 7, "synthesis.md", "# Synthesis\nGap found.")
-        fake_llm = FakeLLMClient("## H1\nTest hypothesis")
-        result = rc_executor._execute_hypothesis_gen(
+        fake_llm = FakeLLMClient("# Contribution Framing\nNovel approach.")
+        result = rc_executor._execute_contribution_framing(
             stage_dir, run_dir, rc_config, adapters, llm=fake_llm
         )
         assert result.status == StageStatus.DONE
-        assert "hypotheses.md" in result.artifacts
-        perspectives_dir = stage_dir / "perspectives"
-        assert perspectives_dir.exists()
-        # Should have 3 perspective files (innovator, pragmatist, contrarian)
-        perspective_files = list(perspectives_dir.glob("*.md"))
-        assert len(perspective_files) == 3
+        assert "contribution_framing.md" in result.artifacts
+        assert (stage_dir / "contribution_framing.md").exists()
 
-    def test_hypothesis_gen_without_llm_no_perspectives(
+    def test_contribution_framing_without_llm_uses_default(
         self, tmp_path: Path, rc_config: RCConfig, adapters: AdapterBundle
     ) -> None:
         run_dir = tmp_path / "run"
@@ -1301,15 +1301,16 @@ class TestHypothesisGenDebate:
         stage_dir = run_dir / "stage-08"
         stage_dir.mkdir(parents=True)
         _write_prior_artifact(run_dir, 7, "synthesis.md", "# Synthesis\nGap found.")
-        result = rc_executor._execute_hypothesis_gen(
+        result = rc_executor._execute_contribution_framing(
             stage_dir, run_dir, rc_config, adapters, llm=None
         )
         assert result.status == StageStatus.DONE
-        assert "hypotheses.md" in result.artifacts
-        # No perspectives directory when no LLM
-        assert not (stage_dir / "perspectives").exists()
+        assert "contribution_framing.md" in result.artifacts
+        content = (stage_dir / "contribution_framing.md").read_text(encoding="utf-8")
+        assert "Contribution Framing" in content
 
 
+@pytest.mark.skip(reason="RESULT_ANALYSIS stage removed from 15-stage pipeline")
 class TestResultAnalysisDebate:
     def test_result_analysis_with_llm_creates_perspectives(
         self, tmp_path: Path, rc_config: RCConfig, adapters: AdapterBundle
@@ -1813,71 +1814,10 @@ class TestComputeBudgetBlock:
     def test_compute_budget_injected_into_code_generation(
         self, tmp_path: Path, run_dir: Path, adapters: AdapterBundle
     ) -> None:
-        import sys
-
-        data = {
-            "project": {"name": "rc-test", "mode": "docs-first"},
-            "research": {
-                "topic": "optimizer comparison",
-                "domains": ["ml"],
-                "daily_paper_count": 2,
-                "quality_threshold": 8.2,
-            },
-            "runtime": {"timezone": "UTC"},
-            "notifications": {
-                "channel": "local",
-                "on_stage_start": True,
-                "on_stage_fail": False,
-                "on_gate_required": True,
-            },
-            "knowledge_base": {"backend": "markdown", "root": str(tmp_path / "kb")},
-            "openclaw_bridge": {"use_memory": True, "use_message": True},
-            "llm": {
-                "provider": "openai-compatible",
-                "base_url": "http://localhost:1234/v1",
-                "api_key_env": "RC_TEST_KEY",
-                "api_key": "inline-test-key",
-                "primary_model": "fake-model",
-                "fallback_models": [],
-            },
-            "security": {"hitl_required_stages": [5, 9, 20]},
-            "experiment": {
-                "mode": "sandbox",
-                "time_budget_sec": 60,
-                "metric_key": "best_loss",
-                "metric_direction": "minimize",
-                "sandbox": {
-                    "python_path": sys.executable,
-                    "gpu_required": False,
-                    "max_memory_mb": 1024,
-                },
-            },
-        }
-        cfg = RCConfig.from_dict(data, project_root=tmp_path, check_paths=False)
-
-        # Write exp_plan prior artifact
-        _write_prior_artifact(run_dir, 10, "exp_plan.yaml", "objectives: test")
-
-        # Capture what the LLM receives
-        llm = FakeLLMClient(
-            "```filename:main.py\nimport numpy as np\nprint('best_loss: 0.1')\n```"
-        )
-        stage_dir = run_dir / "stage-11"
-        stage_dir.mkdir(parents=True, exist_ok=True)
-
-        rc_executor._execute_code_generation(
-            stage_dir, run_dir, cfg, adapters, llm=llm
-        )
-
-        # The LLM should have received compute budget info in some call
-        # (may be first call in legacy mode, or second call with CodeAgent)
-        assert len(llm.calls) >= 1
-        all_user_msgs = " ".join(
-            call[-1]["content"] for call in llm.calls if call
-        )
-        assert "60" in all_user_msgs or "Compute Budget" in all_user_msgs
+        pytest.skip("CODE_GENERATION stage removed from 15-stage pipeline")
 
 
+@pytest.mark.skip(reason="EXPERIMENT_RUN stage removed from 15-stage pipeline")
 class TestPartialTimeoutStatus:
     """Test partial status for timed-out experiments with data (R4-1c)."""
 
@@ -1957,6 +1897,7 @@ class TestPartialTimeoutStatus:
             assert payload["status"] == "failed"
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 class TestTimeoutAwareRefine:
     """Test timeout-aware prompt injection in iterative refine (R4-1b)."""
 
@@ -2045,53 +1986,38 @@ class TestTimeoutAwareRefine:
 
 
 class TestDataIntegrityBlock:
-    """Test paper draft blocked when no metrics exist (R4-2a)."""
+    """Test paper draft behavior with geotechnical workflow (no experiment blocking)."""
 
-    def test_paper_draft_blocked_with_no_metrics(
+    def test_paper_draft_proceeds_without_metrics(
         self, tmp_path: Path, run_dir: Path, rc_config: RCConfig, adapters: AdapterBundle
     ) -> None:
-        # Write prior artifacts with NO metrics
-        _write_prior_artifact(run_dir, 16, "outline.md", "# Outline\n## Abstract\n")
-        # No experiment_summary.json, no run files with metrics
-        runs_dir = run_dir / "stage-12" / "runs"
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        (runs_dir / "run-1.json").write_text(
-            json.dumps({"run_id": "run-1", "status": "failed", "metrics": {}, "timed_out": True}),
-            encoding="utf-8",
-        )
+        # In the geotechnical journal workflow, paper drafting does NOT
+        # block on missing experiment metrics — the paper is based on
+        # synthesis and contribution framing, not ML experiment runs.
+        _write_prior_artifact(run_dir, 9, "outline.md", "# Outline\n## Abstract\n")
+        _write_prior_artifact(run_dir, 7, "synthesis.md", "## Synthesis\nPrior work...")
+        _write_prior_artifact(run_dir, 8, "contribution_framing.md", "## Contribution\nThis work...")
 
-        stage_dir = run_dir / "stage-17"
+        stage_dir = run_dir / "stage-10"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
-        llm = FakeLLMClient("should not be called")
+        llm = FakeLLMClient("# Paper Title\n## Abstract\nSome abstract text.")
         result = rc_executor._execute_paper_draft(
             stage_dir, run_dir, rc_config, adapters, llm=llm
         )
 
-        assert result.status == StageStatus.FAILED
-        draft = (stage_dir / "paper_draft.md").read_text(encoding="utf-8")
-        assert "Blocked" in draft or "BLOCKED" in draft or "no metrics" in draft.lower()
-        # LLM should NOT have been called
-        assert len(llm.calls) == 0
+        # Geotechnical workflow: should proceed (not blocked)
+        assert result.status == StageStatus.DONE
+        assert len(llm.calls) >= 1
 
-    def test_paper_draft_proceeds_with_metrics(
+    def test_paper_draft_proceeds_with_synthesis(
         self, tmp_path: Path, run_dir: Path, rc_config: RCConfig, adapters: AdapterBundle
     ) -> None:
-        _write_prior_artifact(run_dir, 16, "outline.md", "# Outline\n## Abstract\n")
-        # Write experiment data with real metrics
-        runs_dir = run_dir / "stage-12" / "runs"
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        (runs_dir / "run-1.json").write_text(
-            json.dumps({
-                "run_id": "run-1",
-                "status": "completed",
-                "metrics": {"best_loss": 0.123},
-                "stdout": "best_loss: 0.123\n",
-            }),
-            encoding="utf-8",
-        )
+        _write_prior_artifact(run_dir, 9, "outline.md", "# Outline\n## Abstract\n")
+        _write_prior_artifact(run_dir, 7, "synthesis.md", "## Synthesis\nFEM studies of pile installation...")
+        _write_prior_artifact(run_dir, 8, "contribution_framing.md", "## Contribution\nNumerical analysis...")
 
-        stage_dir = run_dir / "stage-17"
+        stage_dir = run_dir / "stage-10"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
         llm = FakeLLMClient("# Paper Title\n## Abstract\nSome abstract text.")
@@ -2101,11 +2027,11 @@ class TestDataIntegrityBlock:
 
         # Should proceed (LLM was called)
         assert len(llm.calls) >= 1
-        # The prompt should contain anti-fabrication instructions
+        # The prompt should contain geotechnical requirements
         all_prompts = " ".join(
             msg["content"] for call in llm.calls for msg in call
         )
-        assert "Data Integrity" in all_prompts or "ONLY report numbers" in all_prompts
+        assert "geotechnical" in all_prompts.lower() or "Geotechnical" in all_prompts
 
 
 # ── R4-3: Conference-Grade Title Guidelines Tests ────────────────────
@@ -2189,14 +2115,19 @@ class TestConferenceWritingQuality:
             citation_instruction="test",
             outline="test",
         )
-        # System prompt should mention key principles
+        # System prompt should mention key principles for geotechnical papers
         assert "NOVELTY" in sp.system or "novelty" in sp.system.lower()
-        assert "fabricate" in sp.system.lower() or "real experimental" in sp.system.lower()
+        assert (
+            "fabricate" in sp.system.lower()
+            or "precision" in sp.system.lower()
+            or "validation" in sp.system.lower()
+        )
 
 
 # ── R5-1 & R5-2: Bug Fixes Tests ────────────────────────────────────
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 class TestRefineTimeoutAndIterationCap:
     """Test R5-1 (no 120s cap) and R5-2 (iteration cap raised to 10)."""
 
@@ -2459,6 +2390,7 @@ class TestExperimentHarness:
 # ── R5-5: Stdout Truncation Tests ────────────────────────────────────
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 class TestStdoutTruncation:
     """Test stdout/stderr truncation in refine run summaries (R5-5)."""
 
@@ -2526,6 +2458,7 @@ class TestStdoutTruncation:
 # ===================================================================
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 class TestNoImproveStreakFix:
     """R6-1: no_improve_streak should only count iterations with real metrics."""
 
@@ -2588,6 +2521,7 @@ class TestNoImproveStreakFix:
         assert log_data.get("stop_reason") == "consecutive_no_metrics"
 
 
+@pytest.mark.skip(reason="EXPERIMENT_RUN stage removed from 15-stage pipeline")
 class TestStdoutFailureDetection:
     """R6-2: Detect stdout failure signals even when exit code is 0."""
 
@@ -2725,8 +2659,9 @@ class TestMetricValUndefined:
 
 
 class TestConsecutiveEmptyMetrics:
-    """R6-4: Pipeline should detect consecutive empty-metrics REFINE cycles."""
+    """R6-4: Consecutive empty metrics detection (not applicable to 15-stage geotechnical pipeline)."""
 
+    @pytest.mark.skip(reason="_consecutive_empty_metrics always returns False in 15-stage pipeline")
     def test_detects_consecutive_empty(self, tmp_path: Path) -> None:
         """Two cycles with empty metrics should return True."""
         from researchclaw.pipeline.runner import _consecutive_empty_metrics
@@ -2823,10 +2758,10 @@ class TestMultiConditionEnforcement:
 
 
 class TestEvidenceBoundedWriting:
-    """R7-2: Paper draft prompt must enforce evidence-bounded claims."""
+    """R7-2: Paper draft prompt must enforce evidence-bounded claims (geotechnical)."""
 
     def test_paper_draft_has_evidence_bounding_rules(self) -> None:
-        """System prompt should contain evidence-bounding rules."""
+        """System prompt should contain evidence/claim bounding rules."""
         from researchclaw.prompts import PromptManager
         pm = PromptManager()
         sp = pm.for_stage(
@@ -2837,12 +2772,18 @@ class TestEvidenceBoundedWriting:
             citation_instruction="",
             outline="# Outline",
         )
-        assert "EVIDENCE-BOUNDING RULES" in sp.system
-        assert "title" in sp.system.lower()
-        assert "causal claim" in sp.system.lower() or "causal claims" in sp.system.lower()
+        # Geotechnical draft prompt enforces precision, validation, and no fabrication
+        assert (
+            "PRECISION" in sp.system
+            or "VALIDATION" in sp.system
+            or "precision" in sp.system.lower()
+        )
+        # Title must be discussed somewhere in the prompt (user section)
+        full_prompt = sp.system + sp.user
+        assert "title" in full_prompt.lower() or "Title" in full_prompt
 
     def test_hedging_language_guidance(self) -> None:
-        """Should suggest hedged alternatives like 'Toward...' for partial data."""
+        """Should include guidance on validation and precise claims."""
         from researchclaw.prompts import PromptManager
         pm = PromptManager()
         sp = pm.for_stage(
@@ -2853,9 +2794,15 @@ class TestEvidenceBoundedWriting:
             citation_instruction="",
             outline="",
         )
-        assert "Toward" in sp.system or "Investigating" in sp.system
+        # Geotechnical prompt focuses on precision and validation, not hedging titles
+        assert (
+            "validat" in sp.system.lower()
+            or "precision" in sp.system.lower()
+            or "Honesty" in sp.system
+        )
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 class TestConditionCoverageDetection:
     """R7-3: REFINE should detect condition coverage gaps."""
 
@@ -3006,6 +2953,7 @@ class TestBreadthFirstPrompt:
         assert "ONE representative" in sp.user
 
 
+@pytest.mark.skip(reason="ITERATIVE_REFINE stage removed from 15-stage pipeline")
 class TestRefineFilePreservation:
     """R8-2: Refine should preserve supporting files when LLM only returns main.py."""
 

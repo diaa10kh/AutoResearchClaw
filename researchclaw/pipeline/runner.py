@@ -146,7 +146,7 @@ def _collect_content_metrics(run_dir: Path | None) -> dict[str, object]:
     if run_dir is None:
         return metrics
 
-    draft_path = run_dir / "stage-17" / "paper_draft.md"
+    draft_path = run_dir / "stage-10" / "paper_draft.md"
     if draft_path.exists():
         try:
             quality_module = importlib.import_module("researchclaw.quality")
@@ -163,7 +163,7 @@ def _collect_content_metrics(run_dir: Path | None) -> dict[str, object]:
         ):
             pass
 
-    verify_path = run_dir / "stage-23" / "verification_report.json"
+    verify_path = run_dir / "stage-15" / "verification_report.json"
     if verify_path.exists():
         try:
             vdata = json.loads(verify_path.read_text(encoding="utf-8"))
@@ -263,7 +263,7 @@ def execute_pipeline(
 
         # --- PIVOT/REFINE decision handling ---
         if (
-            stage == Stage.RESEARCH_DECISION
+            stage == Stage.QUALITY_GATE
             and result.status == StageStatus.DONE
             and result.decision in DECISION_ROLLBACK
         ):
@@ -412,8 +412,8 @@ def _package_deliverables(
     # Prefer verified version (stage 23) over base version (stage 22)
     paper_md = None
     for candidate in [
-        run_dir / "stage-23" / "paper_final_verified.md",
-        run_dir / "stage-22" / "paper_final.md",
+        run_dir / "stage-15" / "paper_final_verified.md",
+        run_dir / "stage-14" / "paper_final.md",
     ]:
         if candidate.exists() and candidate.stat().st_size > 0:
             paper_md = candidate
@@ -427,7 +427,7 @@ def _package_deliverables(
     # from it so that hallucinated citations removed in Stage 23 are also
     # absent from the LaTeX.  Fall back to the Stage 22 .tex otherwise.
     tex_regenerated = False
-    verified_md = run_dir / "stage-23" / "paper_final_verified.md"
+    verified_md = run_dir / "stage-15" / "paper_final_verified.md"
     if (
         paper_md is not None
         and paper_md == verified_md
@@ -474,7 +474,7 @@ def _package_deliverables(
             logger.debug("paper.tex regeneration from verified md failed")
 
     if not tex_regenerated:
-        tex_src = run_dir / "stage-22" / "paper.tex"
+        tex_src = run_dir / "stage-14" / "paper.tex"
         if tex_src.exists() and tex_src.stat().st_size > 0:
             shutil.copy2(tex_src, dest / "paper.tex")
             packaged.append("paper.tex")
@@ -483,8 +483,8 @@ def _package_deliverables(
     # Prefer verified bib (stage 23) over base bib (stage 22)
     bib_src = None
     for candidate in [
-        run_dir / "stage-23" / "references_verified.bib",
-        run_dir / "stage-22" / "references.bib",
+        run_dir / "stage-15" / "references_verified.bib",
+        run_dir / "stage-14" / "references.bib",
     ]:
         if candidate.exists() and candidate.stat().st_size > 0:
             bib_src = candidate
@@ -494,7 +494,7 @@ def _package_deliverables(
         packaged.append("references.bib")
 
     # --- 4. Experiment code package ---
-    code_src = run_dir / "stage-22" / "code"
+    code_src = run_dir / "stage-14" / "code"
     if code_src.is_dir():
         code_dest = dest / "code"
         if code_dest.exists():
@@ -503,19 +503,19 @@ def _package_deliverables(
         packaged.append("code/")
 
     # --- 5. Verification report (optional) ---
-    verify_src = run_dir / "stage-23" / "verification_report.json"
+    verify_src = run_dir / "stage-15" / "verification_report.json"
     if verify_src.exists() and verify_src.stat().st_size > 0:
         shutil.copy2(verify_src, dest / "verification_report.json")
         packaged.append("verification_report.json")
 
     # --- 5b. Sanitization report (degraded mode) ---
-    san_src = run_dir / "stage-22" / "sanitization_report.json"
+    san_src = run_dir / "stage-14" / "sanitization_report.json"
     if san_src.exists() and san_src.stat().st_size > 0:
         shutil.copy2(san_src, dest / "sanitization_report.json")
         packaged.append("sanitization_report.json")
 
     # --- 6. Charts (optional) ---
-    charts_src = run_dir / "stage-22" / "charts"
+    charts_src = run_dir / "stage-14" / "charts"
     if charts_src.is_dir() and any(charts_src.iterdir()):
         charts_dest = dest / "charts"
         if charts_dest.exists():
@@ -683,8 +683,8 @@ def _version_rollback_stages(
     import shutil
 
     rollback_num = int(rollback_target)
-    # Stages from rollback target up to RESEARCH_DECISION (15) will be rerun
-    decision_num = int(Stage.RESEARCH_DECISION)
+    # Stages from rollback target up to QUALITY_GATE (13) will be rerun
+    decision_num = int(Stage.QUALITY_GATE)
 
     for stage_num in range(rollback_num, decision_num + 1):
         stage_dir = run_dir / f"stage-{stage_num:02d}"
@@ -699,28 +699,8 @@ def _version_rollback_stages(
 
 
 def _consecutive_empty_metrics(run_dir: Path, pivot_count: int) -> bool:
-    """R6-4: Check if the current and previous REFINE cycles both produced empty metrics."""
-    # Check the most recent experiment_summary.json (stage-14) and its versioned predecessor
-    current = run_dir / "stage-14" / "experiment_summary.json"
-    prev = run_dir / f"stage-14_v{pivot_count}" / "experiment_summary.json"
-    for path in (current, prev):
-        if not path.exists():
-            return False
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            # Check all possible metric locations
-            has_metrics = False
-            ms = data.get("metrics_summary", {})
-            if isinstance(ms, dict) and ms:
-                has_metrics = True
-            br = data.get("best_run", {})
-            if isinstance(br, dict) and br.get("metrics"):
-                has_metrics = True
-            if has_metrics:
-                return False  # At least one cycle had real metrics
-        except (json.JSONDecodeError, OSError, AttributeError):
-            return False
-    return True  # Both cycles had empty metrics
+    """Not applicable to the 15-stage geotechnical pipeline (no iterative experiment metrics)."""
+    return False
 
 
 def _check_experiment_quality(
@@ -1049,12 +1029,9 @@ def _metaclaw_post_pipeline(
             stage_name = {
                 1: "topic_init", 2: "problem_decompose", 3: "search_strategy",
                 4: "literature_collect", 5: "literature_screen", 6: "knowledge_extract",
-                7: "synthesis", 8: "hypothesis_gen", 9: "experiment_design",
-                10: "code_generation", 11: "resource_planning", 12: "experiment_run",
-                13: "iterative_refine", 14: "result_analysis", 15: "research_decision",
-                16: "paper_outline", 17: "paper_draft", 18: "peer_review",
-                19: "paper_revision", 20: "quality_gate", 21: "knowledge_archive",
-                22: "export_publish", 23: "citation_verify",
+                7: "synthesis", 8: "contribution_framing", 9: "paper_outline",
+                10: "paper_draft", 11: "peer_review", 12: "paper_revision",
+                13: "quality_gate", 14: "export_publish", 15: "citation_verify",
             }.get(stage_num, "")
             if not stage_name:
                 continue

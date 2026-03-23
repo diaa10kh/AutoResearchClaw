@@ -16,7 +16,7 @@ from researchclaw.adapters import AdapterBundle
 from researchclaw.config import RCConfig
 from researchclaw.hardware import HardwareProfile, detect_hardware, ensure_torch_available, is_metric_name
 from researchclaw.llm import create_llm_client
-from researchclaw.llm.client import LLMClient
+from researchclaw.llm.client import LLMClient, is_reasoning_model
 from researchclaw.prompts import PromptManager
 from researchclaw.pipeline.stages import (
     NEXT_STAGE,
@@ -100,6 +100,23 @@ _DOMAIN_KEYWORDS: dict[str, tuple[list[str], str, str]] = {
          "finite element", "structural", "mechatronics", "autonomous"],
         "engineering",
         "IEEE Transactions, ASME journals, AIAA",
+    ),
+    "geotechnical": (
+        [
+            "geotechnical", "pile", "soil", "foundation", "bearing capacity",
+            "consolidation", "settlement", "retaining wall", "embankment",
+            "slope stability", "earth pressure", "seepage", "pore pressure",
+            "constitutive model", "Mohr-Coulomb", "Modified Cam Clay",
+            "finite element geotechnical", "finite difference geotechnical",
+            "coupled Eulerian-Lagrangian", "CEL", "large deformation",
+            "pile installation", "pile penetration", "soil-structure interaction",
+            "centrifuge", "triaxial", "oedometer", "shear strength",
+            "effective stress", "total stress", "drained", "undrained",
+            "hypoplastic", "NorSand", "sand", "clay", "rock mechanics",
+            "tunneling", "excavation", "ground improvement",
+        ],
+        "geotechnical engineering",
+        "Computers and Geotechnics, Géotechnique, IJNAMG, JGGE",
     ),
     "biology": (
         ["genomics", "proteomics", "transcriptomics", "CRISPR",
@@ -1448,6 +1465,42 @@ The combined approach outperforms either component under fixed compute budget.
 """
 
 
+def _default_contribution_framing(topic: str) -> str:
+    return f"""# Contribution Framing: {topic}
+
+## Research Problem
+{topic} — a geotechnical engineering challenge requiring rigorous numerical analysis.
+
+## Gap in Existing Literature
+Existing studies have not fully addressed the specific conditions and mechanisms
+relevant to this problem. Key gaps include:
+- Limited validation against comprehensive experimental datasets
+- Insufficient parametric studies covering the relevant parameter space
+- Lack of mechanistic insight into the governing failure/deformation modes
+
+## Paper Contribution
+This paper contributes:
+1. A validated numerical model for {topic} using advanced finite element / finite
+   difference / CEL simulation methods
+2. A systematic parametric study quantifying sensitivity to key design parameters
+3. Engineering design guidance derived from the numerical results
+4. Mechanistic interpretation of observed behaviour
+
+## Novelty Statement
+The novelty of this work lies in [specific aspect that distinguishes it from prior work].
+This is demonstrated by comparison with published experimental and numerical benchmarks.
+
+## Positioning Relative to Prior Work
+- [Author et al., Year]: studied [related topic] but did not address [gap].
+- [Author et al., Year]: used [simpler model] without [advanced feature].
+- This paper addresses these gaps by [specific approach].
+
+## Target Journal
+Q1 geotechnical engineering journal (e.g., Computers and Geotechnics, Géotechnique,
+Int. J. Num. Anal. Meth. Geomech.)
+"""
+
+
 def _default_paper_outline(topic: str) -> str:
     return f"""# Paper Outline
 
@@ -2562,7 +2615,7 @@ def _synthesize_perspectives(
     return resp.content
 
 
-def _execute_hypothesis_gen(
+def _execute_contribution_framing(
     stage_dir: Path,
     run_dir: Path,
     config: RCConfig,
@@ -2574,54 +2627,31 @@ def _execute_hypothesis_gen(
     synthesis = _read_prior_artifact(run_dir, "synthesis.md") or ""
     if llm is not None:
         _pm = prompts or PromptManager()
-        from researchclaw.prompts import DEBATE_ROLES_HYPOTHESIS  # noqa: PLC0415
-
-        # --- Multi-perspective debate ---
-        perspectives_dir = stage_dir / "perspectives"
-        variables = {"topic": config.research.topic, "synthesis": synthesis}
-        perspectives = _multi_perspective_generate(
-            llm, DEBATE_ROLES_HYPOTHESIS, variables, perspectives_dir
-        )
-        # --- Synthesize into final hypotheses ---
-        hypotheses_md = _synthesize_perspectives(
-            llm, perspectives, "hypothesis_synthesize", _pm
-        )
-    else:
-        hypotheses_md = _default_hypotheses(config.research.topic)
-    (stage_dir / "hypotheses.md").write_text(hypotheses_md, encoding="utf-8")
-
-    # --- Novelty check (non-blocking) ---
-    novelty_artifacts: tuple[str, ...] = ()
-    try:
-        from researchclaw.literature.novelty import check_novelty  # noqa: PLC0415
-
-        candidates_text = _read_prior_artifact(run_dir, "candidates.jsonl") or ""
-        papers_seen = _parse_jsonl_rows(candidates_text) if candidates_text else []
-        novelty_report = check_novelty(
+        _overlay = _get_evolution_overlay(run_dir, "contribution_framing")
+        sp = _pm.for_stage(
+            "contribution_framing",
+            evolution_overlay=_overlay,
             topic=config.research.topic,
-            hypotheses_text=hypotheses_md,
-            papers_already_seen=papers_seen,
-            s2_api_key=getattr(config.llm, "s2_api_key", ""),
+            synthesis=synthesis,
         )
-        (stage_dir / "novelty_report.json").write_text(
-            json.dumps(novelty_report, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        resp = _chat_with_prompt(
+            llm,
+            sp.system,
+            sp.user,
+            json_mode=sp.json_mode,
+            max_tokens=sp.max_tokens,
         )
-        novelty_artifacts = ("novelty_report.json",)
-        logger.info(
-            "Novelty check: score=%.3f  assessment=%s  recommendation=%s",
-            novelty_report["novelty_score"],
-            novelty_report["assessment"],
-            novelty_report["recommendation"],
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning("Novelty check failed (non-blocking)", exc_info=True)
-
+        framing_md = resp.content
+        if not framing_md.strip():
+            framing_md = _default_contribution_framing(config.research.topic)
+    else:
+        framing_md = _default_contribution_framing(config.research.topic)
+    (stage_dir / "contribution_framing.md").write_text(framing_md, encoding="utf-8")
     return StageResult(
-        stage=Stage.HYPOTHESIS_GEN,
+        stage=Stage.CONTRIBUTION_FRAMING,
         status=StageStatus.DONE,
-        artifacts=("hypotheses.md",) + novelty_artifacts,
-        evidence_refs=("stage-08/hypotheses.md",),
+        artifacts=("contribution_framing.md",),
+        evidence_refs=(f"stage-{int(Stage.CONTRIBUTION_FRAMING):02d}/contribution_framing.md",),
     )
 
 
@@ -3344,10 +3374,7 @@ def _execute_code_generation(
             )
             _sandbox_factory = _csb
 
-        if any(
-            config.llm.primary_model.startswith(p)
-            for p in ("gpt-5", "o3", "o4")
-        ):
+        if is_reasoning_model(config.llm.primary_model):
             _code_max_tokens = 16384
 
         # ── Domain detection + Code Search for non-ML domains ──────────
@@ -3445,10 +3472,9 @@ def _execute_code_generation(
             exp_plan=exp_plan,
             metric_direction_hint=_md_hint,
         )
-        # R13-3: Use higher max_tokens for reasoning models (they consume tokens
-        # for internal chain-of-thought). Retry once with even higher limit on empty.
+        # Use higher max_tokens for reasoning models (gpt-5.x, codex, o3/o4 family)
         _code_max_tokens = sp.max_tokens or 8192
-        if any(config.llm.primary_model.startswith(p) for p in ("gpt-5", "o3", "o4")):
+        if is_reasoning_model(config.llm.primary_model):
             _code_max_tokens = max(_code_max_tokens, 16384)
 
         resp = _chat_with_prompt(
@@ -5754,14 +5780,11 @@ def _execute_paper_outline(
     llm: LLMClient | None = None,
     prompts: PromptManager | None = None,
 ) -> StageResult:
-    analysis = _read_prior_artifact(run_dir, "analysis.md") or ""
-    decision = _read_prior_artifact(run_dir, "decision.md") or ""
+    synthesis = _read_prior_artifact(run_dir, "synthesis.md") or ""
+    contribution_framing = _read_prior_artifact(run_dir, "contribution_framing.md") or ""
     preamble = _build_context_preamble(
         config,
         run_dir,
-        include_analysis=True,
-        include_decision=True,
-        include_experiment_data=True,
     )
 
     # WS-5.2: Read iteration feedback if available (multi-round iteration)
@@ -5797,8 +5820,8 @@ def _execute_paper_outline(
             preamble=preamble,
             topic_constraint=_pm.block("topic_constraint", topic=config.research.topic),
             feedback=feedback,
-            analysis=analysis,
-            decision=decision,
+            synthesis=synthesis,
+            contribution_framing=contribution_framing,
             academic_style_guide=_asg,
         )
         resp = _chat_with_prompt(
@@ -5830,7 +5853,7 @@ def _execute_paper_outline(
         stage=Stage.PAPER_OUTLINE,
         status=StageStatus.DONE,
         artifacts=("outline.md",),
-        evidence_refs=("stage-16/outline.md",),
+        evidence_refs=("stage-09/outline.md",),
     )
 
 
@@ -6089,9 +6112,9 @@ def _write_paper_sections(
         "data verification, condition listing, or metric enumeration before the title. "
         "The paper should read like a published manuscript, not a data report."
     )
-    # R14-1: Higher token limit for reasoning models
+    # Higher token limit for reasoning models (gpt-5.x, codex, o3/o4 family)
     _paper_max_tokens = 12000
-    if any(model_name.startswith(p) for p in ("gpt-5", "o3", "o4")):
+    if is_reasoning_model(model_name):
         _paper_max_tokens = 24000
 
     # T3.5: Retry once on failure, use placeholder if still fails
@@ -6868,579 +6891,20 @@ def _execute_paper_draft(
     prompts: PromptManager | None = None,
 ) -> StageResult:
     outline = _read_prior_artifact(run_dir, "outline.md") or ""
+    synthesis = _read_prior_artifact(run_dir, "synthesis.md") or ""
+    contribution_framing = _read_prior_artifact(run_dir, "contribution_framing.md") or ""
     preamble = _build_context_preamble(
         config,
         run_dir,
         include_goal=True,
-        include_hypotheses=True,
-        include_analysis=True,
-        include_experiment_data=True,  # WS-5.1: inject real experiment data
+        include_synthesis=True,
     )
 
-    # R21-1: Read BEST experiment_summary across all stage-14 versions.
-    # Refinement can regress — the final (non-versioned) stage-14 may have
-    # worse data than an earlier version. Pick the richest one.
-    exp_summary_text = None
-    _best_metric_count = 0
-    for _s14_dir in sorted(run_dir.glob("stage-14*")):
-        _candidate = _s14_dir / "experiment_summary.json"
-        if _candidate.is_file():
-            _text = _candidate.read_text(encoding="utf-8")
-            _parsed = _safe_json_loads(_text, {})
-            if isinstance(_parsed, dict):
-                _mcount = _parsed.get("total_metric_keys", 0) or len(
-                    _parsed.get("metrics_summary", {})
-                )
-                _paired_count = len(_parsed.get("paired_comparisons", []))
-                _score = _mcount + _paired_count * 10  # Prefer paired data
-                if _score > _best_metric_count:
-                    _best_metric_count = _score
-                    exp_summary_text = _text
-                    logger.info(
-                        "R21-1: Selected %s (metric_keys=%d, paired=%d, score=%d)",
-                        _s14_dir.name, _mcount, _paired_count, _score,
-                    )
-    # Fallback to standard artifact read
-    if exp_summary_text is None:
-        exp_summary_text = _read_prior_artifact(run_dir, "experiment_summary.json")
-    exp_metrics_instruction = ""
-    has_real_metrics = False
-    if exp_summary_text:
-        exp_summary = _safe_json_loads(exp_summary_text, {})
-        if isinstance(exp_summary, dict) and exp_summary.get("metrics_summary"):
-            has_real_metrics = True
-            exp_metrics_instruction = (
-                "\n\nIMPORTANT: Use the ACTUAL experiment results provided in the context. "
-                "All numbers in the Results and Experiments sections MUST reference real data. "
-                "Do NOT write 'no quantitative results yet' or use placeholder numbers. "
-                "Cite specific metrics with their actual values.\n"
-            )
-
-    # Collect raw experiment stdout metrics as hard constraint for the paper
-    raw_metrics_block, _has_parsed_metrics = _collect_raw_experiment_metrics(run_dir)
-    if raw_metrics_block:
-        # BUG-23: Raw stdout alone is not sufficient — require either
-        # metrics_summary data, parsed metrics from run JSONs,
-        # OR at least 3 condition= patterns in raw block
-        _has_condition_pattern = len(re.findall(
-            r"condition[=:]", raw_metrics_block, re.IGNORECASE
-        )) >= 3
-        if has_real_metrics or _has_parsed_metrics or _has_condition_pattern:
-            has_real_metrics = True
-        exp_metrics_instruction += raw_metrics_block
-
-    # R18-1 + R19-6: Inject paired statistical comparisons AND condition summaries
-    if exp_summary_text:
-        exp_summary_parsed = _safe_json_loads(exp_summary_text, {})
-        if isinstance(exp_summary_parsed, dict):
-            # R19-6: Inject experiment scale header so LLM knows the data richness
-            _total_conds = exp_summary_parsed.get("total_conditions")
-            _total_mkeys = exp_summary_parsed.get("total_metric_keys")
-            if _total_conds or _total_mkeys:
-                scale_block = "\n\n## EXPERIMENT SCALE\n"
-                if _total_conds:
-                    scale_block += f"- Total conditions tested: {_total_conds}\n"
-                if _total_mkeys:
-                    scale_block += f"- Total metric keys collected: {_total_mkeys}\n"
-                scale_block += (
-                    "- This is a MULTI-SEED experiment. Report mean +/- std across seeds.\n"
-                    "- Do NOT describe results as 'single run' or 'preliminary'.\n"
-                )
-                exp_metrics_instruction += scale_block
-
-            # R19-6 + R33: Inject condition summaries with CIs
-            cond_summaries = exp_summary_parsed.get("condition_summaries", {})
-            if isinstance(cond_summaries, dict) and cond_summaries:
-                cond_block = "\n\n## PER-CONDITION SUMMARY (use in Results tables)\n"
-                for cname, cdata in sorted(cond_summaries.items()):
-                    cond_block += f"\n### {cname}\n"
-                    if not isinstance(cdata, dict):
-                        continue
-                    sr = cdata.get("success_rate")
-                    if sr is not None:
-                        cond_block += f"- Success rate: {sr:.1%}\n"
-                    ns = cdata.get("n_seeds") or cdata.get("n_seed_metrics")
-                    if ns:
-                        cond_block += f"- Seeds: {ns}\n"
-                    ci_lo = cdata.get("ci95_low")
-                    ci_hi = cdata.get("ci95_high")
-                    if ci_lo is not None and ci_hi is not None:
-                        try:
-                            cond_block += f"- Bootstrap 95% CI: [{float(ci_lo):.4f}, {float(ci_hi):.4f}]\n"
-                        except (ValueError, TypeError):
-                            cond_block += f"- Bootstrap 95% CI: [{ci_lo}, {ci_hi}]\n"
-                    cm = cdata.get("metrics", {})
-                    if cm:
-                        for mk, mv in sorted(cm.items()):
-                            if isinstance(mv, (int, float)):
-                                cond_block += f"- {mk}: {mv:.4f}\n"
-                            else:
-                                cond_block += f"- {mk}: {mv}\n"
-                exp_metrics_instruction += cond_block
-
-            # R18-1: Inject paired statistical comparisons
-            paired = exp_summary_parsed.get("paired_comparisons", [])
-            if paired:
-                paired_block = "\n\n## PAIRED STATISTICAL COMPARISONS (use these in Results)\n"
-                paired_block += f"Total: {len(paired)} paired tests computed.\n"
-                for pc in paired:
-                    if not isinstance(pc, dict):
-                        continue
-                    method = pc.get("method", "?")
-                    baseline = pc.get("baseline", "?")
-                    regime = pc.get("regime", "all")
-                    md = pc.get("mean_diff", "?")
-                    sd = pc.get("std_diff", "?")
-                    ts = pc.get("t_stat", "?")
-                    pv = pc.get("p_value", "?")
-                    ci_lo = pc.get("ci95_low")
-                    ci_hi = pc.get("ci95_high")
-                    ci_str = ""
-                    if ci_lo is not None and ci_hi is not None:
-                        try:
-                            ci_str = f", 95% CI [{float(ci_lo):.3f}, {float(ci_hi):.3f}]"
-                        except (ValueError, TypeError):
-                            ci_str = f", 95% CI [{ci_lo}, {ci_hi}]"
-                    paired_block += (
-                        f"- {method} vs {baseline} (regime={regime}): "
-                        f"mean_diff={md}, std_diff={sd}, "
-                        f"t={ts}, p={pv}{ci_str}\n"
-                    )
-                exp_metrics_instruction += paired_block
-
-            # R24: Method naming map — translate generic condition labels
-            _cond_names = list(cond_summaries.keys()) if isinstance(cond_summaries, dict) and cond_summaries else []
-            if _cond_names:
-                naming_block = (
-                    "\n\n## METHOD NAMING (CRITICAL — do NOT use generic labels in the paper)\n"
-                    "The condition labels below come from the experiment code. In the paper, "
-                    "you MUST use DESCRIPTIVE algorithm names, not generic labels.\n"
-                    "- If a condition name is already descriptive (e.g., 'random_search', "
-                    "'bayesian_optimization', 'ppo_policy'), use it directly as a proper name.\n"
-                    "- If a condition name is generic (e.g., 'baseline_1', 'method_variant_1'), "
-                    "you MUST infer the algorithm from the experiment code/context and use the "
-                    "real algorithm name (e.g., 'Random Search', 'Bayesian Optimization', "
-                    "'PPO', 'Curiosity-Driven RL').\n"
-                    "- NEVER write `baseline_1` or `method_variant_1` in the paper text.\n"
-                    f"- Conditions to name: {_cond_names}\n"
-                )
-                exp_metrics_instruction += naming_block
-
-            # IMP-8: Inject broken ablation warnings
-            abl_warnings = exp_summary_parsed.get("ablation_warnings", [])
-            if abl_warnings:
-                broken_block = (
-                    "\n\n## BROKEN ABLATIONS (DO NOT discuss as valid results)\n"
-                    "The following ablation conditions produced IDENTICAL outputs, "
-                    "indicating implementation bugs. Do NOT present their differences "
-                    "as findings. Mention them ONLY in a 'Limitations' sub-section "
-                    "as known implementation issues:\n"
-                )
-                for _aw in abl_warnings:
-                    broken_block += f"- {_aw}\n"
-                broken_block += (
-                    "\nIf you reference these conditions, state explicitly: "
-                    "'Due to an implementation defect, conditions X and Y produced "
-                    "identical outputs; their comparison is therefore uninformative.'\n"
-                )
-                exp_metrics_instruction += broken_block
-
-            # R25: Statistical table format requirement
-            if paired:
-                stat_table_block = (
-                    "\n\n## STATISTICAL TABLE REQUIREMENT (MANDATORY in Results section)\n"
-                    "The Results section MUST include a statistical comparison table with columns:\n"
-                    "| Comparison | Mean Diff | Std Diff | t-statistic | p-value | Significance |\n"
-                    "Use the PAIRED STATISTICAL COMPARISONS data above to fill this table.\n"
-                    "Mark significance: *** (p<0.001), ** (p<0.01), * (p<0.05), n.s.\n"
-                    "This is non-negotiable — a top-venue paper MUST have statistical tests.\n"
-                )
-                exp_metrics_instruction += stat_table_block
-
-            # R26: Metric definition requirement
-            exp_metrics_instruction += (
-                "\n\n## METRIC DEFINITIONS (MANDATORY in Experiments section)\n"
-                "The Experiments section MUST define each metric:\n"
-                "- **Primary metric**: what it measures, how it is computed, range, direction "
-                "(higher/lower is better), and units if applicable.\n"
-                "- **Secondary metric**: same details.\n"
-                "- For time-to-event metrics: explain the horizon, what constitutes success, "
-                "and how failures are handled (e.g., set to max horizon).\n"
-                "- These definitions MUST appear BEFORE any results tables.\n"
-            )
-
-            # R27: Multi-seed framing enforcement
-            _any_seeds = any(
-                (cond_summaries.get(c) or {}).get("n_seed_metrics", 0) > 1
-                for c in _cond_names
-            ) if _cond_names else False
-            if _any_seeds:
-                exp_metrics_instruction += (
-                    "\n\n## MULTI-SEED EXPERIMENT FRAMING (CRITICAL)\n"
-                    "This experiment uses MULTIPLE independent random seeds per condition.\n"
-                    "- Report mean +/- std (or SE) for all metrics.\n"
-                    "- NEVER describe this as 'a single run' or '1 benchmark-artifact run'.\n"
-                    "- Frame as: 'We evaluate each method across N seeds per regime.'\n"
-                    "- The seed-level data IS the evidence base — it is NOT a single observation.\n"
-                    "- Include per-regime breakdowns (easy vs hard) as separate rows in tables.\n"
-                )
-
-    # BUG-003: Inject actual evaluated datasets as a hard constraint
-    if exp_summary_text:
-        _ds_parsed = _safe_json_loads(exp_summary_text, {})
-        if isinstance(_ds_parsed, dict):
-            _datasets: set[str] = set()
-            # Extract from condition names (often contain dataset info)
-            for _cname in (_ds_parsed.get("condition_summaries") or {}).keys():
-                _datasets.add(str(_cname))
-            # Extract from explicit "datasets" field if present
-            for _ds in (_ds_parsed.get("datasets") or []):
-                if isinstance(_ds, str):
-                    _datasets.add(_ds)
-            # Extract from "benchmark" or "dataset" fields
-            for _key in ("benchmark", "dataset", "dataset_name"):
-                _dv = _ds_parsed.get(_key)
-                if isinstance(_dv, str) and _dv:
-                    _datasets.add(_dv)
-            if _datasets:
-                exp_metrics_instruction += (
-                    "\n\n## ACTUAL EVALUATED DATASETS (HARD CONSTRAINT)\n"
-                    "The following datasets/conditions were ACTUALLY tested in experiments:\n"
-                    + "".join(f"- {d}\n" for d in sorted(_datasets))
-                    + "\nCRITICAL: Do NOT claim evaluation on any dataset not listed above.\n"
-                    "Do NOT fabricate results for datasets you did not run experiments on.\n"
-                    "If you reference other datasets, clearly state they are 'not evaluated "
-                    "in this work' or are 'left for future work'.\n"
-                )
-
-    # P7: Ablation effectiveness check
-    if exp_summary_text:
-        _exp_parsed_p7 = _safe_json_loads(exp_summary_text, {})
-        if isinstance(_exp_parsed_p7, dict):
-            _abl_warnings = _check_ablation_effectiveness(_exp_parsed_p7)
-            if _abl_warnings:
-                _abl_block = (
-                    "\n\n## ABLATION EFFECTIVENESS WARNINGS\n"
-                    "The following ablations showed minimal effect (within 5%% of baseline). "
-                    "Discuss this honestly — it may indicate the ablated component is not "
-                    "important, or the ablation was not properly implemented:\n"
-                )
-                for _aw in _abl_warnings:
-                    _abl_block += f"- {_aw}\n"
-                exp_metrics_instruction += _abl_block
-                logger.warning("P7: Ablation effectiveness warnings: %s", _abl_warnings)
-
-    # P10: Contradiction detection
-    if exp_summary_text:
-        _exp_parsed_p10 = _safe_json_loads(exp_summary_text, {})
-        if isinstance(_exp_parsed_p10, dict):
-            _contradictions = _detect_result_contradictions(_exp_parsed_p10)
-            if _contradictions:
-                _contra_block = (
-                    "\n\n## RESULT INTERPRETATION ADVISORIES (CRITICAL — read before writing)\n"
-                )
-                for _ca in _contradictions:
-                    _contra_block += f"- {_ca}\n"
-                exp_metrics_instruction += _contra_block
-                logger.warning("P10: Contradiction advisories: %s", _contradictions)
-
-    # R10: HARD BLOCK — refuse to write paper when all data is simulated
-    all_simulated = True
-    for stage_subdir in sorted(run_dir.glob("stage-*/runs")):
-        for run_file in sorted(stage_subdir.glob("*.json")):
-            if run_file.name == "results.json":
-                continue
-            try:
-                _payload = json.loads(run_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
-            if isinstance(_payload, dict) and _payload.get("status") != "simulated":
-                all_simulated = False
-                break
-        if not all_simulated:
-            break
-
-    if all_simulated:
-        logger.error(
-            "BLOCKED: All experiment data is simulated (mode='simulated'). "
-            "Cannot write a paper based on formulaic fake data. "
-            "Switch to experiment.mode='sandbox' and re-run."
-        )
-        (stage_dir / "paper_draft.md").write_text(
-            "# Paper Draft Blocked\n\n"
-            "**Reason**: All experiment results are from simulated mode "
-            "(formulaic data: `0.3 + idx * 0.03`). "
-            "These are not real experimental results.\n\n"
-            "**Action Required**: Set `experiment.mode: 'sandbox'` in "
-            "config.arc.yaml and re-run the pipeline.",
-            encoding="utf-8",
-        )
-        return StageResult(
-            stage=Stage.PAPER_DRAFT,
-            status=StageStatus.FAILED,
-            artifacts=("paper_draft.md",),
-            evidence_refs=(),
-        )
-
-    # R4-2: HARD BLOCK — refuse to write paper with no real data (ML/empirical domains)
-    # For non-empirical domains (math proofs, theoretical economics), allow proceeding
-    _domain_id, _domain_name, _domain_venues = _detect_domain(
-        config.research.topic, config.research.domains
-    )
-    _empirical_domains = {"ml", "engineering", "biology", "chemistry"}
-    if not has_real_metrics:
-        if _domain_id in _empirical_domains:
-            logger.error(
-                "BLOCKED: Cannot write paper — experiment produced NO metrics. "
-                "The pipeline will not fabricate results."
-            )
-            (stage_dir / "paper_draft.md").write_text(
-                "# Paper Draft Blocked\n\n"
-                "**Reason**: Experiment stage produced no metrics (status: failed/timeout). "
-                "Cannot write a paper without real experimental data.\n\n"
-                "**Action Required**: Fix experiment execution or increase time_budget_sec.",
-                encoding="utf-8",
-            )
-            return StageResult(
-                stage=Stage.PAPER_DRAFT,
-                status=StageStatus.FAILED,
-                artifacts=("paper_draft.md",),
-                evidence_refs=(),
-            )
-        else:
-            logger.warning(
-                "No experiment metrics found, but domain '%s' may be non-empirical "
-                "(theoretical/mathematical). Proceeding with paper draft.",
-                _domain_name,
-            )
-
-    # R11-5: Experiment quality minimum threshold before paper writing
-    # Parse analysis.md for quality rating and condition completeness
-    analysis_text = _read_prior_artifact(run_dir, "analysis.md") or ""
-    _quality_warnings: list[str] = []
-
-    # Check 1: Was the analysis quality rating very low?
-    import re as _re_q
-    _rating_match = _re_q.search(
-        r"(?:quality\s+rating|result\s+quality)[:\s]*\**(\d+)\s*/\s*10",
-        analysis_text,
-        _re_q.IGNORECASE,
-    )
-    if _rating_match:
-        _analysis_rating = int(_rating_match.group(1))
-        if _analysis_rating <= 3:
-            _quality_warnings.append(
-                f"Analysis rated experiment quality {_analysis_rating}/10"
-            )
-        # BUG-23: If quality rating is ≤ 2, force has_real_metrics = False
-        # to prevent fabricated results even if stdout had stray numbers.
-        # R5-BUG-05: Skip override when _has_parsed_metrics is True — the
-        # analysis.md may be stale (from pre-refinement Stage 14) while
-        # Stage 13 refinement produced real parsed metrics.
-        if _analysis_rating <= 2 and has_real_metrics and not _has_parsed_metrics:
-            logger.warning(
-                "BUG-23 guard: Analysis quality %d/10 ≤ 2 — "
-                "overriding has_real_metrics to False (experiment likely failed)",
-                _analysis_rating,
-            )
-            has_real_metrics = False
-
-    # Check 2: Are baselines missing?
-    _analysis_lower = analysis_text.lower()
-    if "no" in _analysis_lower and "baseline" in _analysis_lower:
-        if any(phrase in _analysis_lower for phrase in [
-            "no baseline", "no bo", "no random", "baselines are missing",
-            "missing baselines", "baseline coverage is missing",
-        ]):
-            _quality_warnings.append("Baselines appear to be missing from results")
-
-    # Check 3: Is the metric undefined?
-    if any(phrase in _analysis_lower for phrase in [
-        "metric is undefined", "primary_metric is undefined",
-        "undefined metric", "metric undefined",
-    ]):
-        _quality_warnings.append("Primary metric is undefined (direction/units/formula unknown)")
-
-    # Check 4: Very few conditions completed
-    _condition_count = len(_re_q.findall(
-        r"condition[=:\s]+\w+.*?(?:mean|primary_metric)",
-        raw_metrics_block or "",
-        _re_q.IGNORECASE,
-    ))
-
-    if _quality_warnings:
-        _warning_block = "\n".join(f"  - {w}" for w in _quality_warnings)
-        logger.warning(
-            "Stage 17: Experiment quality concerns detected before paper writing:\n%s",
-            _warning_block,
-        )
-        # Inject quality warnings into the paper writing prompt so the LLM
-        # writes an appropriately hedged paper
-        exp_metrics_instruction += (
-            "\n\n## EXPERIMENT QUALITY WARNINGS (address these honestly in the paper)\n"
-            + "\n".join(f"- {w}" for w in _quality_warnings)
-            + "\n\nBecause of these issues, the paper MUST:\n"
-            "- Use hedged language ('preliminary', 'pilot', 'initial exploration')\n"
-            "- NOT claim definitive comparisons between methods\n"
-            "- Dedicate a substantial Limitations section to these gaps\n"
-            "- Frame the contribution as methodology/framework, not empirical findings\n"
-        )
-        # Save warnings for tracking
-        (stage_dir / "quality_warnings.json").write_text(
-            json.dumps(_quality_warnings, indent=2), encoding="utf-8"
-        )
-
-    # R4-2: Anti-fabrication data integrity instruction
-    exp_metrics_instruction += (
-        "\n\n## CRITICAL: Data Integrity Rules\n"
-        "- You may ONLY report numbers that appear in the experiment data above\n"
-        "- If the experiment data is incomplete (fewer conditions than planned), report\n"
-        "  ONLY the conditions that were actually run\n"
-        "- Do NOT extrapolate, interpolate, or 'fill in' missing cells in tables\n"
-        "- Do NOT invent confidence intervals, p-values, or statistical tests unless\n"
-        "  the actual data supports them\n"
-        "- If only N conditions completed, simply report results for those N conditions\n"
-        "  without repeating apologies or disclaimers about missing conditions\n"
-        "- Any table cell without real data must show '—' (not a plausible number)\n"
-        "- FORBIDDEN: generating numbers that 'look right' based on your training data\n"
-    )
-
-    # IMP-6 + FA: Inject chart references into paper draft prompt
-    # Prefer FigureAgent's figure_plan.json (rich descriptions) over raw file scan
-    # BUG-FIX: figure_plan.json may be a list (from FigureAgent planner) or a dict
-    # (from executor overwrite).  The orchestrator writes a list at planning time;
-    # the executor overwrites with a dict only when figure_count > 0.  If the
-    # FigureAgent renders 0 charts the list persists, and calling .get() on it
-    # raises AttributeError.
-    _fa_descriptions = ""
-    for _s14_dir in sorted(run_dir.glob("stage-14*")):
-        # Prefer the final plan (dict with figure_descriptions) if it exists
-        for _fp_name in ("figure_plan_final.json", "figure_plan.json"):
-            _fp_path = _s14_dir / _fp_name
-            if not _fp_path.exists():
-                continue
-            try:
-                _fp_data = json.loads(_fp_path.read_text(encoding="utf-8"))
-                if isinstance(_fp_data, dict):
-                    _fa_descriptions = _fp_data.get("figure_descriptions", "")
-                elif isinstance(_fp_data, list) and _fp_data:
-                    # List format from FigureAgent planner — synthesize descriptions
-                    _desc_parts = ["## PLANNED FIGURES (from figure plan)\n"]
-                    for _fig in _fp_data:
-                        if isinstance(_fig, dict):
-                            _fid = _fig.get("figure_id", "unnamed")
-                            _ftitle = _fig.get("title", "")
-                            _fcap = _fig.get("caption", "")
-                            _fsec = _fig.get("section", "results")
-                            _desc_parts.append(
-                                f"- **{_fid}** ({_fsec}): {_ftitle}\n  {_fcap}"
-                            )
-                    if len(_desc_parts) > 1:
-                        _fa_descriptions = "\n".join(_desc_parts)
-            except (json.JSONDecodeError, OSError):
-                pass
-            if _fa_descriptions:
-                break
-        if _fa_descriptions:
-            break
-
-    if _fa_descriptions:
-        exp_metrics_instruction += "\n\n" + _fa_descriptions
-        logger.info("Stage 17: Injected FigureAgent figure descriptions into paper draft prompt")
-    else:
-        # Fallback: scan for chart files
-        _chart_files: list[str] = []
-        for _s14_dir in sorted(run_dir.glob("stage-14*")):
-            _charts_path = _s14_dir / "charts"
-            if _charts_path.is_dir():
-                for _cf in sorted(_charts_path.glob("*.png")):
-                    _chart_files.append(_cf.name)
-        if _chart_files:
-            _chart_block = (
-                "\n\n## AVAILABLE FIGURES (embed in the paper)\n"
-                "The following figures were generated from actual experiment data. "
-                "You MUST reference at least 1-2 of these in the Results section "
-                "using markdown image syntax: `![Caption](charts/filename.png)`\n\n"
-            )
-            for _cf_name in _chart_files:
-                _label = _cf_name.replace("_", " ").replace(".png", "").title()
-                _chart_block += f"- `charts/{_cf_name}` — {_label}\n"
-            _chart_block += (
-                "\nFor each figure referenced, write a descriptive caption and "
-                "discuss what the figure shows in 2-3 sentences.\n"
-            )
-            exp_metrics_instruction += _chart_block
-            logger.info(
-                "Stage 17: Injected %d chart references into paper draft prompt",
-                len(_chart_files),
-            )
-
-    # WS-5.5: Framework diagram placeholder instruction
-    exp_metrics_instruction += (
-        "\n\n## FRAMEWORK DIAGRAM PLACEHOLDER\n"
-        "In the Method/Approach section, include a placeholder for the methodology "
-        "framework overview figure. Insert this exactly:\n\n"
-        "```\n"
-        "![Framework Overview](charts/framework_diagram.png)\n"
-        "**Figure N.** Overview of the proposed methodology. "
-        "[A detailed framework diagram will be generated separately and inserted here.]\n"
-        "```\n\n"
-        "This figure should be referenced in the text as 'Figure N' and discussed briefly "
-        "(1-2 sentences describing the overall pipeline/architecture flow). "
-        "The actual image will be generated post-hoc using a text-to-image model.\n"
-    )
-
-    # P5: Extract hyperparameters from results.json for paper Method section
-    _hp_table = ""
-    for _s14_dir in sorted(run_dir.glob("stage-14*")):
-        for _run_file in sorted(_s14_dir.glob("runs/*.json")):
-            try:
-                _run_data = json.loads(_run_file.read_text(encoding="utf-8"))
-                if isinstance(_run_data, dict) and _run_data.get("hyperparameters"):
-                    _hp = _run_data["hyperparameters"]
-                    if isinstance(_hp, dict) and _hp:
-                        _hp_table = "\n\n## HYPERPARAMETERS (include as a table in the Method section)\n"
-                        _hp_table += "| Hyperparameter | Value |\n|---|---|\n"
-                        for _hk, _hv in sorted(_hp.items()):
-                            _hp_table += f"| {_hk} | {_hv} |\n"
-                        _hp_table += (
-                            "\nThis table MUST appear in the Method/Experiments section. "
-                            "Include ALL hyperparameters used, with justification for key choices.\n"
-                        )
-                        break
-            except (json.JSONDecodeError, OSError):
-                continue
-        if _hp_table:
-            break
-    # Also check staging dirs for results.json
-    if not _hp_table:
-        for _staging_dir in sorted(run_dir.glob("stage-*/runs/_docker_*")):
-            _rjson = _staging_dir / "results.json"
-            if _rjson.is_file():
-                try:
-                    _rdata = json.loads(_rjson.read_text(encoding="utf-8"))
-                    if isinstance(_rdata, dict) and _rdata.get("hyperparameters"):
-                        _hp = _rdata["hyperparameters"]
-                        if isinstance(_hp, dict) and _hp:
-                            _hp_table = "\n\n## HYPERPARAMETERS (include as a table in the Method section)\n"
-                            _hp_table += "| Hyperparameter | Value |\n|---|---|\n"
-                            for _hk, _hv in sorted(_hp.items()):
-                                _hp_table += f"| {_hk} | {_hv} |\n"
-                            _hp_table += (
-                                "\nThis table MUST appear in the Method/Experiments section. "
-                                "Include ALL hyperparameters used, with justification for key choices.\n"
-                            )
-                            break
-                except (json.JSONDecodeError, OSError):
-                    continue
-    if _hp_table:
-        exp_metrics_instruction += _hp_table
-
-    # F2.6: Build citation list from references.bib / candidates with cite_keys
+    # Build citation instruction from available references
     citation_instruction = ""
     bib_text = _read_prior_artifact(run_dir, "references.bib")
 
-    # P3: Pre-verify citations before paper draft — remove hallucinated refs
+    # Pre-verify citations before paper draft — remove hallucinated refs
     if bib_text and bib_text.strip():
         from researchclaw.literature.verify import (
             filter_verified_bibtex,
@@ -7458,11 +6922,11 @@ def _execute_paper_draft(
                     bib_text, encoding="utf-8"
                 )
                 logger.info(
-                    "P3: Pre-verification kept %d/%d citations (removed %d hallucinated)",
+                    "Pre-verification kept %d/%d citations (removed %d hallucinated)",
                     _kept, _pre_report.total, _removed,
                 )
         except Exception as exc:
-            logger.warning("P3: Pre-verification failed, using original bib: %s", exc)
+            logger.warning("Pre-verification failed, using original bib: %s", exc)
 
     candidates_text = _read_prior_artifact(run_dir, "candidates.jsonl")
     if candidates_text:
@@ -7474,7 +6938,6 @@ def _execute_paper_draft(
                 if isinstance(row.get("authors"), list) and row["authors"]:
                     first_author = row["authors"][0]
                     if isinstance(first_author, dict):
-                        # BUG-38: name may be non-str (tuple/list) — force str
                         _name = first_author.get("name", "")
                         authors_info = _name if isinstance(_name, str) else str(_name)
                     elif isinstance(first_author, str):
@@ -7486,54 +6949,70 @@ def _execute_paper_draft(
                     f"- [{row['cite_key']}] → TITLE: \"{title}\" "
                     f"| {authors_info} "
                     f"({row.get('venue', '')}, {row.get('year', '')}, "
-                    f"cited {row.get('citation_count', 0)} times) "
-                    f"| ONLY cite this key when discussing: {title}"
+                    f"cited {row.get('citation_count', 0)} times)"
                 )
         if cite_lines:
             citation_instruction = (
                 "\n\nAVAILABLE REFERENCES (use [cite_key] to cite in the text):\n"
                 + "\n".join(cite_lines)
                 + "\n\nCRITICAL CITATION RULES:\n"
-                "- In the body text, cite using [cite_key] format, e.g. [smith2024transformer].\n"
-                "- Do NOT write a References section — it will be auto-generated from the bibliography file.\n"
-                "- Do NOT invent any references or arXiv IDs not in the above list.\n"
-                "- You may cite a subset, but NEVER fabricate citations or change arXiv IDs.\n"
-                "- SEMANTIC MATCHING: Before citing a reference, verify that its TITLE matches\n"
-                "  the concept you are discussing. Do NOT use an unrelated cite_key just\n"
-                "  because it sounds similar.\n"
-                "- If no reference in the list matches the concept you want to cite,\n"
-                "  write 'prior work has shown...' WITHOUT a citation, rather than using\n"
-                "  a mismatched reference.\n"
-                "- Each [cite_key] MUST correspond to the paper whose title is shown\n"
-                "  next to that key in the list above. Cross-check before citing.\n"
-                "\nCITATION QUANTITY & QUALITY CONSTRAINTS:\n"
-                "- Cite 25-40 unique references in the paper body. The Related Work\n"
-                "  section alone should cite at least 15 references.\n"
-                "- Every citation MUST be directly relevant to the paper's topic.\n"
-                "- DO NOT cite papers from unrelated domains (wireless communication, "
-                "manufacturing, UAV, etc.).\n"
-                "- Prefer well-known, highly-cited papers over obscure ones.\n"
-                "- If unsure whether a paper exists or is relevant, DO NOT cite it.\n"
+                "- Cite using [cite_key] format, e.g. [smith2024transformer].\n"
+                "- Do NOT write a References section — it will be auto-generated.\n"
+                "- Do NOT invent any references not in the above list.\n"
+                "- Verify title matches the concept you are discussing before citing.\n"
+                "- If no reference matches, write 'prior work has shown...' without a citation.\n"
+                "- Cite 30-50 unique references total; Introduction alone should cite 15+.\n"
             )
+
+    # Geotechnical context instruction for the paper draft
+    paper_requirements_instruction = (
+        "\n\n## GEOTECHNICAL JOURNAL PAPER REQUIREMENTS\n"
+        "This is a paper improvement engine for geotechnical numerical simulation papers.\n"
+        "- All claims must be supported by cited literature or your simulation results.\n"
+        "- The Numerical Model section must be fully reproducible (mesh, elements, BCs).\n"
+        "- The Validation section must include quantitative agreement metrics.\n"
+        "- Constitutive model parameters must be physically justified with sources.\n"
+        "- Results must include load-displacement curves, stress paths, or contour plots.\n"
+        "- Do NOT fabricate numerical values. Use placeholders if values are unknown.\n"
+        f"\nSynthesis of prior literature:\n{synthesis[:2000]}\n"
+        f"\nContribution framing:\n{contribution_framing[:1500]}\n"
+    )
 
     if llm is not None:
         _pm = prompts or PromptManager()
         topic_constraint = _pm.block("topic_constraint", topic=config.research.topic)
 
-        # --- Section-by-section writing (3 calls) for conference-grade depth ---
-        draft = _write_paper_sections(
-            llm=llm,
-            pm=_pm,
-            run_dir=run_dir,
+        # Load style blocks
+        _style_blocks: dict[str, str] = {}
+        for _bname in ("academic_style_guide", "narrative_writing_rules",
+                        "anti_hedging_rules", "anti_repetition_rules", "writing_structure"):
+            try:
+                _style_blocks[_bname] = _pm.block(_bname)
+            except (KeyError, Exception):  # noqa: BLE001
+                _style_blocks[_bname] = ""
+
+        _overlay = _get_evolution_overlay(run_dir, "paper_draft")
+        sp = _pm.for_stage(
+            "paper_draft",
+            evolution_overlay=_overlay,
             preamble=preamble,
             topic_constraint=topic_constraint,
-            exp_metrics_instruction=exp_metrics_instruction,
+            exp_metrics_instruction=paper_requirements_instruction,
             citation_instruction=citation_instruction,
             outline=outline,
-            model_name=config.llm.primary_model,
+            **_style_blocks,
         )
+        resp = _chat_with_prompt(
+            llm,
+            sp.system,
+            sp.user,
+            json_mode=sp.json_mode,
+            max_tokens=sp.max_tokens,
+            retries=1,
+        )
+        draft = resp.content
 
-        # R7: Strip LLM-generated References section — it often fabricates arXiv IDs.
+        # Strip LLM-generated References section — it often fabricates arXiv IDs.
         import re as _re_r7
         ref_pattern = _re_r7.compile(
             r'^(#{1,2}\s*References.*)', _re_r7.MULTILINE | _re_r7.DOTALL
@@ -7541,50 +7020,36 @@ def _execute_paper_draft(
         ref_match = ref_pattern.search(draft)
         if ref_match:
             draft = draft[:ref_match.start()].rstrip()
-            logger.info("Stage 17: Stripped LLM-generated References section (R7 fix)")
+            logger.info("Stage 10: Stripped LLM-generated References section")
     else:
-        # Build template with real data if available
-        results_section = "Template results summary."
-        if exp_summary_text:
-            exp_summary = _safe_json_loads(exp_summary_text, {})
-            if isinstance(exp_summary, dict) and exp_summary.get("metrics_summary"):
-                lines = ["Experiment results:"]
-                for mk, mv in exp_summary["metrics_summary"].items():
-                    if isinstance(mv, dict):
-                        lines.append(
-                            f"- {mk}: mean={mv.get('mean')}, min={mv.get('min')}, "
-                            f"max={mv.get('max')}, n={mv.get('count')}"
-                        )
-                results_section = "\n".join(lines)
-
-        draft = f"""# Draft Title
+        draft = f"""# Draft Paper: {config.research.topic}
 
 ## Abstract
-Template draft abstract.
+[Template abstract — provide topic, method, key numerical results, and engineering significance]
 
-## Introduction
-Template introduction for {config.research.topic}.
+## 1. Introduction
+[Template introduction for {config.research.topic}]
 
-## Related Work
-Template related work.
+## 2. Numerical Model
+[Describe FE/FD/CEL model: software, mesh, elements, boundary conditions, initial state]
 
-## Method
-Template method description.
+## 3. Constitutive Model
+[Describe constitutive model with parameter table: name, value, units, source]
 
-## Experiments
-Template experimental setup.
+## 4. Validation
+[Compare numerical results against published experimental or numerical benchmarks]
 
-## Results
-{results_section}
+## 5. Results and Parametric Study
+[Present systematic parametric study with load-displacement curves, stress paths, contours]
 
-## Limitations
-Template limitations.
+## 6. Discussion
+[Mechanistic interpretation of results; comparison with prior work; design implications]
 
-## Conclusion
-Template conclusion.
+## 7. Limitations
+[Mesh dependency, 2D simplification, constitutive model assumptions, scale effects]
 
-## References
-Template references.
+## 8. Conclusions
+[Quantitative summary of key findings; engineering guidance; future work]
 
 Generated: {_utcnow_iso()}
 """
@@ -7597,7 +7062,7 @@ Generated: {_utcnow_iso()}
         stage=Stage.PAPER_DRAFT,
         status=StageStatus.DONE,
         artifacts=("paper_draft.md",),
-        evidence_refs=("stage-17/paper_draft.md",),
+        evidence_refs=("stage-10/paper_draft.md",),
     )
 
 
@@ -7721,22 +7186,27 @@ def _execute_peer_review(
     else:
         reviews = """# Reviews
 
-## Reviewer A
-- Strengths: Clear problem statement.
-- Weaknesses: Limited ablation details.
-- Actionable revisions: Add uncertainty analysis and stronger baselines.
+## Reviewer A — Numerical Methods Expert
+- Strengths: Clear problem statement and numerical methodology.
+- Weaknesses: Mesh sensitivity study should be more comprehensive.
+- Actionable revisions: Add quantitative convergence metrics; report NRMSD for validation.
 
-## Reviewer B
-- Strengths: Reproducibility focus.
-- Weaknesses: Discussion underdeveloped.
-- Actionable revisions: Expand limitations and broader impact.
+## Reviewer B — Geotechnical Domain Expert
+- Strengths: Relevant engineering problem with practical significance.
+- Weaknesses: Constitutive model parameter justification needs strengthening.
+- Actionable revisions: Add parameter table with calibration sources; expand Discussion section.
+
+## Reviewer C — Scientific Writing and Rigor Expert
+- Strengths: Reproducibility focus and appropriate references.
+- Weaknesses: Abstract lacks specific numerical results.
+- Actionable revisions: Quantify agreement with benchmarks; sharpen novelty statement.
 """
     (stage_dir / "reviews.md").write_text(reviews, encoding="utf-8")
     return StageResult(
         stage=Stage.PEER_REVIEW,
         status=StageStatus.DONE,
         artifacts=("reviews.md",),
-        evidence_refs=("stage-18/reviews.md",),
+        evidence_refs=("stage-11/reviews.md",),
     )
 
 
@@ -7753,27 +7223,13 @@ def _execute_paper_revision(
     reviews = _read_prior_artifact(run_dir, "reviews.md") or ""
     draft_word_count = len(draft.split())
 
-    # R4-2: Collect real metrics for anti-fabrication guard in revision
-    # BUG-47: _collect_raw_experiment_metrics returns tuple[str, bool], must unpack
-    _raw_metrics_tuple = _collect_raw_experiment_metrics(run_dir)
-    raw_metrics_revision = _raw_metrics_tuple[0] if isinstance(_raw_metrics_tuple, tuple) else (_raw_metrics_tuple or "")
-    data_integrity_revision = ""
-    if raw_metrics_revision:
-        data_integrity_revision = (
-            raw_metrics_revision
-            + "\nDATA INTEGRITY: Do NOT add new numbers that are not in the "
-            "experiment data above. If a reviewer asks for additional results "
-            "you do not have, state 'Due to computational constraints, "
-            "this analysis was not conducted' instead of fabricating data.\n"
-        )
-
     if llm is not None:
         _pm = prompts or PromptManager()
         try:
             _ws_revision = _pm.block("writing_structure")
         except (KeyError, Exception):  # noqa: BLE001
             _ws_revision = ""
-        # IMP-20/25/31/24: Load style blocks for revision prompt
+        # Load style blocks for revision prompt
         _rev_blocks: dict[str, str] = {}
         for _bname in ("academic_style_guide", "narrative_writing_rules",
                         "anti_hedging_rules", "anti_repetition_rules"):
@@ -7781,7 +7237,7 @@ def _execute_paper_revision(
                 _rev_blocks[_bname] = _pm.block(_bname)
             except (KeyError, Exception):  # noqa: BLE001
                 _rev_blocks[_bname] = ""
-        # Load draft quality directives from Stage 17
+        # Load draft quality directives from Stage 10
         _quality_prefix = ""
         _quality_json_path = _find_prior_file(run_dir, "draft_quality.json")
         if _quality_json_path and _quality_json_path.exists():
@@ -7804,7 +7260,7 @@ def _execute_paper_revision(
             topic_constraint=_pm.block("topic_constraint", topic=config.research.topic),
             writing_structure=_ws_revision,
             draft=draft,
-            reviews=_quality_prefix + reviews + data_integrity_revision,
+            reviews=_quality_prefix + reviews,
             **_rev_blocks,
         )
         # R10-Fix2: Ensure max_tokens is sufficient for full paper revision
@@ -7891,7 +7347,7 @@ def _execute_paper_revision(
         stage=Stage.PAPER_REVISION,
         status=StageStatus.DONE,
         artifacts=("paper_revised.md",),
-        evidence_refs=("stage-19/paper_revised.md",),
+        evidence_refs=("stage-12/paper_revised.md",),
     )
 
 
@@ -8056,7 +7512,7 @@ def _execute_quality_gate(
                 stage=Stage.QUALITY_GATE,
                 status=StageStatus.DONE,
                 artifacts=("quality_report.json",),
-                evidence_refs=("stage-20/quality_report.json",),
+                evidence_refs=("stage-13/quality_report.json",),
                 decision="degraded",
             )
         logger.warning(
@@ -8067,7 +7523,7 @@ def _execute_quality_gate(
             stage=Stage.QUALITY_GATE,
             status=StageStatus.FAILED,
             artifacts=("quality_report.json", "fabrication_flags.json"),
-            evidence_refs=("stage-20/quality_report.json",),
+            evidence_refs=("stage-13/quality_report.json",),
             error=f"Quality score {score:.1f}/10 below threshold {threshold:.1f}. "
                   f"Paper needs revision before export.",
         )
@@ -8080,7 +7536,7 @@ def _execute_quality_gate(
         stage=Stage.QUALITY_GATE,
         status=StageStatus.DONE,
         artifacts=("quality_report.json", "fabrication_flags.json"),
-        evidence_refs=("stage-20/quality_report.json",),
+        evidence_refs=("stage-13/quality_report.json",),
     )
 
 
@@ -8152,7 +7608,7 @@ Generated: {_utcnow_iso()}
         stage=Stage.KNOWLEDGE_ARCHIVE,
         status=StageStatus.DONE,
         artifacts=("archive.md", "bundle_index.json"),
-        evidence_refs=("stage-21/archive.md", "stage-21/bundle_index.json"),
+        evidence_refs=(),
     )
 
 
@@ -9190,7 +8646,7 @@ def _execute_export_publish(
         stage=Stage.EXPORT_PUBLISH,
         status=StageStatus.DONE,
         artifacts=tuple(artifacts),
-        evidence_refs=tuple(f"stage-22/{a}" for a in artifacts),
+        evidence_refs=tuple(f"stage-14/{a}" for a in artifacts),
     )
 
 
@@ -9333,8 +8789,8 @@ def _execute_citation_verify(
             status=StageStatus.DONE,
             artifacts=("verification_report.json", "references_verified.bib"),
             evidence_refs=(
-                "stage-23/verification_report.json",
-                "stage-23/references_verified.bib",
+                "stage-15/verification_report.json",
+                "stage-15/references_verified.bib",
             ),
         )
 
@@ -9484,7 +8940,7 @@ def _execute_citation_verify(
         stage=Stage.CITATION_VERIFY,
         status=StageStatus.DONE,
         artifacts=tuple(artifacts),
-        evidence_refs=tuple(f"stage-23/{a}" for a in artifacts),
+        evidence_refs=tuple(f"stage-15/{a}" for a in artifacts),
     )
 
 
@@ -9496,20 +8952,12 @@ _STAGE_EXECUTORS: dict[Stage, Callable[..., StageResult]] = {
     Stage.LITERATURE_SCREEN: _execute_literature_screen,
     Stage.KNOWLEDGE_EXTRACT: _execute_knowledge_extract,
     Stage.SYNTHESIS: _execute_synthesis,
-    Stage.HYPOTHESIS_GEN: _execute_hypothesis_gen,
-    Stage.EXPERIMENT_DESIGN: _execute_experiment_design,
-    Stage.CODE_GENERATION: _execute_code_generation,
-    Stage.RESOURCE_PLANNING: _execute_resource_planning,
-    Stage.EXPERIMENT_RUN: _execute_experiment_run,
-    Stage.ITERATIVE_REFINE: _execute_iterative_refine,
-    Stage.RESULT_ANALYSIS: _execute_result_analysis,
-    Stage.RESEARCH_DECISION: _execute_research_decision,
+    Stage.CONTRIBUTION_FRAMING: _execute_contribution_framing,
     Stage.PAPER_OUTLINE: _execute_paper_outline,
     Stage.PAPER_DRAFT: _execute_paper_draft,
     Stage.PEER_REVIEW: _execute_peer_review,
     Stage.PAPER_REVISION: _execute_paper_revision,
     Stage.QUALITY_GATE: _execute_quality_gate,
-    Stage.KNOWLEDGE_ARCHIVE: _execute_knowledge_archive,
     Stage.EXPORT_PUBLISH: _execute_export_publish,
     Stage.CITATION_VERIFY: _execute_citation_verify,
 }

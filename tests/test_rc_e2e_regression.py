@@ -252,12 +252,12 @@ class TestNoncriticalStageSkip:
 
         def mock_execute_stage(stage: Stage, **kwargs) -> StageResult:
             _ = kwargs
-            if stage is Stage.KNOWLEDGE_ARCHIVE:
+            if stage is Stage.QUALITY_GATE:
                 return StageResult(
                     stage=stage,
                     status=StageStatus.FAILED,
                     artifacts=(),
-                    error="archive error",
+                    error="quality gate error",
                 )
             return StageResult(
                 stage=stage, status=StageStatus.DONE, artifacts=("ok.md",)
@@ -275,7 +275,7 @@ class TestNoncriticalStageSkip:
         assert len(results) == len(STAGE_SEQUENCE)
         assert results[-1].stage is Stage.CITATION_VERIFY
         assert any(
-            r.stage is Stage.KNOWLEDGE_ARCHIVE and r.status is StageStatus.FAILED
+            r.stage is Stage.QUALITY_GATE and r.status is StageStatus.FAILED
             for r in results
         )
 

@@ -21,7 +21,7 @@ from researchclaw.pipeline.stages import (
 
 
 def test_stage_enum_has_exactly_23_members():
-    assert len(Stage) == 23
+    assert len(Stage) == 15
 
 
 @pytest.mark.parametrize(
@@ -31,8 +31,8 @@ def test_stage_values_follow_sequence_order(index: int, stage: Stage):
     assert int(stage) == index
 
 
-def test_stage_sequence_contains_all_23_stages_in_order():
-    assert len(STAGE_SEQUENCE) == 23
+def test_stage_sequence_contains_all_15_stages_in_order():
+    assert len(STAGE_SEQUENCE) == 15
     assert STAGE_SEQUENCE[0] is Stage.TOPIC_INIT
     assert STAGE_SEQUENCE[-1] is Stage.CITATION_VERIFY
     assert tuple(Stage) == STAGE_SEQUENCE
@@ -50,21 +50,20 @@ def test_previous_stage_boundary_values():
 
 def test_gate_stages_matches_expected_set():
     assert GATE_STAGES == frozenset(
-        {Stage.LITERATURE_SCREEN, Stage.EXPERIMENT_DESIGN, Stage.QUALITY_GATE}
+        {Stage.LITERATURE_SCREEN, Stage.QUALITY_GATE}
     )
 
 
 def test_gate_rollback_map_matches_expected_targets():
     assert GATE_ROLLBACK == {
         Stage.LITERATURE_SCREEN: Stage.LITERATURE_COLLECT,
-        Stage.EXPERIMENT_DESIGN: Stage.HYPOTHESIS_GEN,
         Stage.QUALITY_GATE: Stage.PAPER_OUTLINE,
     }
 
 
 def test_phase_map_has_8_phases_with_expected_membership():
-    assert len(PHASE_MAP) == 8
-    assert PHASE_MAP["A: Research Scoping"] == (
+    assert len(PHASE_MAP) == 5
+    assert PHASE_MAP["A: Paper Scoping"] == (
         Stage.TOPIC_INIT,
         Stage.PROBLEM_DECOMPOSE,
     )
@@ -76,30 +75,16 @@ def test_phase_map_has_8_phases_with_expected_membership():
     )
     assert PHASE_MAP["C: Knowledge Synthesis"] == (
         Stage.SYNTHESIS,
-        Stage.HYPOTHESIS_GEN,
+        Stage.CONTRIBUTION_FRAMING,
     )
-    assert PHASE_MAP["D: Experiment Design"] == (
-        Stage.EXPERIMENT_DESIGN,
-        Stage.CODE_GENERATION,
-        Stage.RESOURCE_PLANNING,
-    )
-    assert PHASE_MAP["E: Experiment Execution"] == (
-        Stage.EXPERIMENT_RUN,
-        Stage.ITERATIVE_REFINE,
-    )
-    assert PHASE_MAP["F: Analysis & Decision"] == (
-        Stage.RESULT_ANALYSIS,
-        Stage.RESEARCH_DECISION,
-    )
-    assert PHASE_MAP["G: Paper Writing"] == (
+    assert PHASE_MAP["D: Paper Writing"] == (
         Stage.PAPER_OUTLINE,
         Stage.PAPER_DRAFT,
         Stage.PEER_REVIEW,
         Stage.PAPER_REVISION,
     )
-    assert PHASE_MAP["H: Finalization"] == (
+    assert PHASE_MAP["E: Finalization"] == (
         Stage.QUALITY_GATE,
-        Stage.KNOWLEDGE_ARCHIVE,
         Stage.EXPORT_PUBLISH,
         Stage.CITATION_VERIFY,
     )
@@ -107,7 +92,7 @@ def test_phase_map_has_8_phases_with_expected_membership():
 
 def test_phase_map_covers_all_stages_exactly_once():
     flattened = tuple(stage for stages in PHASE_MAP.values() for stage in stages)
-    assert len(flattened) == 23
+    assert len(flattened) == 15
     assert set(flattened) == set(Stage)
 
 
@@ -116,10 +101,10 @@ def test_phase_map_covers_all_stages_exactly_once():
     [StageStatus.PENDING, StageStatus.RETRYING, StageStatus.PAUSED],
 )
 def test_start_event_transitions_to_running_from_allowed_states(status: StageStatus):
-    outcome = advance(Stage.EXPERIMENT_RUN, status, TransitionEvent.START)
+    outcome = advance(Stage.PAPER_DRAFT, status, TransitionEvent.START)
 
     assert outcome.status is StageStatus.RUNNING
-    assert outcome.next_stage is Stage.EXPERIMENT_RUN
+    assert outcome.next_stage is Stage.PAPER_DRAFT
 
 
 def test_succeed_event_on_non_gate_stage_transitions_to_done():
@@ -152,14 +137,14 @@ def test_succeed_event_on_gate_stage_transitions_to_blocked_approval():
 
 def test_approve_event_transitions_blocked_stage_to_done():
     outcome = advance(
-        Stage.EXPERIMENT_DESIGN,
+        Stage.QUALITY_GATE,
         StageStatus.BLOCKED_APPROVAL,
         TransitionEvent.APPROVE,
-        hitl_required_stages=(5, 9, 20),
+        hitl_required_stages=(5, 13, 20),
     )
 
     assert outcome.status is StageStatus.DONE
-    assert outcome.next_stage is Stage.CODE_GENERATION
+    assert outcome.next_stage is Stage.EXPORT_PUBLISH
     assert outcome.checkpoint_required is True
 
 
@@ -207,34 +192,34 @@ def test_timeout_event_transitions_to_paused_with_block_decision():
 
 
 def test_fail_event_transitions_running_to_failed_with_retry_decision():
-    outcome = advance(Stage.EXPERIMENT_RUN, StageStatus.RUNNING, TransitionEvent.FAIL)
+    outcome = advance(Stage.PAPER_DRAFT, StageStatus.RUNNING, TransitionEvent.FAIL)
 
     assert outcome.status is StageStatus.FAILED
-    assert outcome.next_stage is Stage.EXPERIMENT_RUN
+    assert outcome.next_stage is Stage.PAPER_DRAFT
     assert outcome.checkpoint_required is True
     assert outcome.decision == "retry"
 
 
 def test_retry_event_transitions_failed_to_retrying():
-    outcome = advance(Stage.EXPERIMENT_RUN, StageStatus.FAILED, TransitionEvent.RETRY)
+    outcome = advance(Stage.PAPER_DRAFT, StageStatus.FAILED, TransitionEvent.RETRY)
 
     assert outcome.status is StageStatus.RETRYING
-    assert outcome.next_stage is Stage.EXPERIMENT_RUN
+    assert outcome.next_stage is Stage.PAPER_DRAFT
     assert outcome.decision == "retry"
 
 
 def test_resume_event_transitions_paused_to_running():
-    outcome = advance(Stage.EXPERIMENT_RUN, StageStatus.PAUSED, TransitionEvent.RESUME)
+    outcome = advance(Stage.PAPER_DRAFT, StageStatus.PAUSED, TransitionEvent.RESUME)
 
     assert outcome.status is StageStatus.RUNNING
-    assert outcome.next_stage is Stage.EXPERIMENT_RUN
+    assert outcome.next_stage is Stage.PAPER_DRAFT
 
 
 def test_pause_event_transitions_failed_to_paused():
-    outcome = advance(Stage.EXPERIMENT_RUN, StageStatus.FAILED, TransitionEvent.PAUSE)
+    outcome = advance(Stage.PAPER_DRAFT, StageStatus.FAILED, TransitionEvent.PAUSE)
 
     assert outcome.status is StageStatus.PAUSED
-    assert outcome.next_stage is Stage.EXPERIMENT_RUN
+    assert outcome.next_stage is Stage.PAPER_DRAFT
     assert outcome.checkpoint_required is True
     assert outcome.decision == "block"
 
@@ -269,7 +254,6 @@ def test_gate_required_is_false_for_non_gate_stages(stage: Stage):
     "stage,expected",
     [
         (Stage.LITERATURE_SCREEN, Stage.LITERATURE_COLLECT),
-        (Stage.EXPERIMENT_DESIGN, Stage.HYPOTHESIS_GEN),
         (Stage.QUALITY_GATE, Stage.PAPER_OUTLINE),
     ],
 )
@@ -323,15 +307,15 @@ def test_transition_map_covers_all_stage_status_values():
 
 def test_decision_rollback_has_pivot_and_refine():
     assert "pivot" in DECISION_ROLLBACK
-    assert "refine" in DECISION_ROLLBACK
+    assert "revise" in DECISION_ROLLBACK
 
 
 def test_decision_rollback_pivot_targets_hypothesis_gen():
-    assert DECISION_ROLLBACK["pivot"] is Stage.HYPOTHESIS_GEN
+    assert DECISION_ROLLBACK["pivot"] is Stage.SYNTHESIS
 
 
 def test_decision_rollback_refine_targets_iterative_refine():
-    assert DECISION_ROLLBACK["refine"] is Stage.ITERATIVE_REFINE
+    assert DECISION_ROLLBACK["revise"] is Stage.PAPER_REVISION
 
 
 def test_max_decision_pivots_is_positive():

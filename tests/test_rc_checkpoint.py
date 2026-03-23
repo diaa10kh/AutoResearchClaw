@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 from typing import cast
 
@@ -63,6 +64,7 @@ class TestCheckpoint:
 
 
 class TestNoncriticalStages:
+    @pytest.mark.skip(reason="KNOWLEDGE_ARCHIVE stage removed from 15-stage pipeline")
     def test_knowledge_archive_is_noncritical(self):
         assert Stage.KNOWLEDGE_ARCHIVE in NONCRITICAL_STAGES
 
@@ -89,7 +91,7 @@ class TestContentMetrics:
         assert metrics["degraded_sources"] == []
 
     def test_metrics_with_draft(self, tmp_path: Path):
-        draft_dir = tmp_path / "stage-17"
+        draft_dir = tmp_path / "stage-10"
         draft_dir.mkdir()
         (draft_dir / "paper_draft.md").write_text(
             "This is a real academic paper about transformers and attention mechanisms. We propose a novel method for improving efficiency.",
@@ -100,7 +102,7 @@ class TestContentMetrics:
         assert cast(float, metrics["template_ratio"]) < 0.5
 
     def test_metrics_with_verification(self, tmp_path: Path):
-        verify_dir = tmp_path / "stage-23"
+        verify_dir = tmp_path / "stage-15"
         verify_dir.mkdir()
         (verify_dir / "verification_report.json").write_text(
             json.dumps(
@@ -129,7 +131,7 @@ class TestContentMetrics:
 
     def test_metrics_with_non_dict_summary(self, tmp_path: Path):
         """Must not raise NameError when 'summary' is not a dict."""
-        verify_dir = tmp_path / "stage-23"
+        verify_dir = tmp_path / "stage-15"
         verify_dir.mkdir()
         (verify_dir / "verification_report.json").write_text(
             json.dumps({"summary": "unexpected string"}),
@@ -142,7 +144,7 @@ class TestContentMetrics:
 
     def test_metrics_with_summary_missing_fields(self, tmp_path: Path):
         """summary dict without total/verified should not crash."""
-        verify_dir = tmp_path / "stage-23"
+        verify_dir = tmp_path / "stage-15"
         verify_dir.mkdir()
         (verify_dir / "verification_report.json").write_text(
             json.dumps({"summary": {"notes": "incomplete"}}),

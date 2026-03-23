@@ -68,7 +68,7 @@ class TestPromptManagerDefaults:
         """20 stages have for_stage() prompts; iterative_refine uses sub_prompts only."""
         pm = PromptManager()
         names = pm.stage_names()
-        assert len(names) >= 20
+        assert len(names) >= 14
         for required in [
             "topic_init",
             "problem_decompose",
@@ -77,18 +77,12 @@ class TestPromptManagerDefaults:
             "literature_screen",
             "knowledge_extract",
             "synthesis",
-            "hypothesis_gen",
-            "experiment_design",
-            "code_generation",
-            "resource_planning",
-            "result_analysis",
-            "research_decision",
+            "contribution_framing",
             "paper_outline",
             "paper_draft",
             "peer_review",
             "paper_revision",
             "quality_gate",
-            "knowledge_archive",
             "export_publish",
         ]:
             assert pm.has_stage(required), f"Missing stage: {required}"
